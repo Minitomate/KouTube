@@ -18,6 +18,7 @@ UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 
 @router.get("/stream")
 async def stream(token: str, request: Request):
+    rid = request.headers.get("x-request-id", "-")
     try:
         data = T.verify("stream", token)
     except ValueError as exc:
@@ -30,6 +31,7 @@ async def stream(token: str, request: Request):
     headers = {"User-Agent": UA["User-Agent"]}
     if request.headers.get("range"):
         headers["Range"] = request.headers["range"]
+    log.info("stream start", rid=rid, range=headers.get("Range", "full"))
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None), follow_redirects=True)
     try:
         r = await client.send(client.build_request("GET", upstream, headers=headers),
@@ -45,17 +47,22 @@ async def stream(token: str, request: Request):
             "code": "upstream", "message": f"upstream status {r.status_code}"})
 
     async def relay():
+        sent = 0
         try:
             async for chunk in r.aiter_bytes(64 * 1024):
                 if await request.is_disconnected():
+                    log.info("stream client gone", rid=rid, sent=sent)
                     break
                 yield chunk
+                sent += len(chunk)
         except (httpx.RequestError, httpx.StreamClosed) as exc:
             # Upstream throttled/dropped mid-transfer: end the response so the
             # client sees EOF and its truncation detector fires (error state,
             # never a silent hang).
-            log.warning("upstream interrupted", error=str(exc))
+            log.warning("upstream interrupted", rid=rid, sent=sent,
+                        error=str(exc))
         finally:
+            log.info("stream end", rid=rid, sent=sent)
             await r.aclose()
             await client.aclose()
 

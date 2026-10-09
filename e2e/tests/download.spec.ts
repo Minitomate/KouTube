@@ -136,4 +136,27 @@ test.describe('stall recovery (user-end)', () => {
     expect(muxHit.length).toBe(1);
     expect(muxHit[0]).toContain('token=mux-test-token');
   });
+
+  test('overrun past estimate completes via Finalizing', async ({ page }) => {
+    await mockResolve(page);
+    await page.route('**/api/prepare', (r) =>
+      r.fulfill({
+        json: {
+          filename: 'over.mp4', container: 'mp4', mergeRequired: false,
+          sizeEstimate: 5, streamToken: 's', muxToken: null, captions: [],
+        },
+      }),
+    );
+    // Delivers 10 bytes against a 5-byte estimate: must complete (honest
+    // Finalizing state), never pin at a frozen 100%.
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: '0123456789', contentType: 'video/mp4' }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.download();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+  });
 });

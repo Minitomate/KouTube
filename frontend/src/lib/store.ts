@@ -3,9 +3,11 @@ import type { MediaInfo } from './api';
 
 export type Format = 'video' | 'audio';
 export type TransferStatus = 'working' | 'done' | 'error' | 'cancelled';
+export type TransferStage = 'preparing' | 'fetching' | 'finalizing' | 'zipping' | 'end';
 export interface Transfer {
   id: string; title: string; loaded: number; total: number | null;
   status: TransferStatus; error?: string;
+  stage: TransferStage; note?: string; rid?: string;
 }
 
 interface State {

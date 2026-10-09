@@ -53,6 +53,10 @@ export interface FetchOpts {
   idleTimeoutMs?: number;
   /** Max resume attempts after stall/truncation. Defaults to 3. */
   maxResumes?: number;
+  /** Correlates client progress with server logs (X-Request-ID). */
+  requestId?: string;
+  /** Stage transitions: 'fetching' on first byte, 'finalizing' past estimate. */
+  onStage?: (stage: 'fetching' | 'finalizing', note?: string) => void;
 }
 
 class StallError extends Error {}
@@ -86,6 +90,9 @@ export async function downloadToDisk(
 ): Promise<void> {
   const idleMs = opts?.idleTimeoutMs ?? 30_000;
   const maxResumes = opts?.maxResumes ?? 3;
+  const onStage = opts?.onStage;
+  const reqHeaders: Record<string, string> = {};
+  if (opts?.requestId) reqHeaders['X-Request-ID'] = opts.requestId;
   const anyWin = window as unknown as {
     showSaveFilePicker?: (o: unknown) => Promise<{
       createWritable: () => Promise<FileSystemWritableFileStream>;
@@ -115,12 +122,11 @@ export async function downloadToDisk(
   let total: number | null = sizeEstimate;
   let honorsRange = false;
   let resumes = 0;
+  let firstByte = true;
   for (;;) {
     signal?.throwIfAborted();
-    const res = await fetch(url, {
-      signal,
-      headers: { Range: `bytes=${loaded}-` },
-    });
+    const fetchHeaders = { ...reqHeaders, Range: `bytes=${loaded}-` };
+    const res = await fetch(url, { signal, headers: fetchHeaders });
     if (res.status !== 200 && res.status !== 206) {
       throw new Error(`Download failed (HTTP ${res.status})`);
     }
@@ -143,6 +149,10 @@ export async function downloadToDisk(
         await write(read.value);
         loaded += read.value.byteLength;
         onProgress(loaded, total);
+        if (firstByte) { firstByte = false; onStage?.('fetching'); }
+        if (total !== null && loaded >= total) {
+          onStage?.('finalizing', `${(loaded / 1048576).toFixed(1)} MB received`);
+        }
       }
     } finally {
       try { await reader.cancel(); } catch { /* already closed */ }

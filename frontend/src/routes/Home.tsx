@@ -26,21 +26,27 @@ export default function Home() {
 
   async function downloadSingle(pageUrl: string, title: string) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const rid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const stage = (st: 'fetching' | 'finalizing', note?: string) => {
+      const cur = useStore.getState().queue.find((q) => q.id === id);
+      if (cur && cur.status === 'working') upsertTransfer({ ...cur, stage: st, note });
+    };
     try {
+      upsertTransfer({ id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', rid });
       const p = await prepare({ url: pageUrl, container: format, quality, audioTrack, captions });
       const ctl = new AbortController();
       abortRef.current = ctl;
-      upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working' });
+      upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching', rid });
       await downloadToDisk(transferUrl(p), p.filename, p.sizeEstimate,
-        (loaded, total) => upsertTransfer({ id, title: p.filename, loaded, total, status: 'working' }),
-        ctl.signal);
-      upsertTransfer({ id, title: p.filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done' });
+        (loaded, total) => upsertTransfer({ id, title: p.filename, loaded, total, status: 'working', stage: 'fetching', rid }),
+        ctl.signal, { requestId: rid, onStage: stage });
+      upsertTransfer({ id, title: p.filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done', stage: 'end', rid });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
-        upsertTransfer({ id, title, loaded: 0, total: null, status: 'cancelled' });
+        upsertTransfer({ id, title, loaded: 0, total: null, status: 'cancelled', stage: 'end', rid });
       } else {
         const message = e instanceof Error ? e.message : 'Download failed';
-        upsertTransfer({ id, title, loaded: 0, total: null, status: 'error', error: message });
+        upsertTransfer({ id, title, loaded: 0, total: null, status: 'error', error: message, stage: 'end', rid });
         throw new Error(message);
       }
     }
@@ -60,15 +66,15 @@ export default function Home() {
         for (const [i, e] of items.entries()) {
           const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
           const id = `zip-${i}`;
-          upsertTransfer({ id, title: e.title || e.videoId, loaded: 0, total: null, status: 'working' });
+          upsertTransfer({ id, title: e.title || e.videoId, loaded: 0, total: null, status: 'working', stage: 'preparing' });
           try {
             const p = await prepare({ url: pageUrl, container: format, quality, audioTrack, captions });
-            upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working' });
+            upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching' });
             zipItems.push({ filename: p.filename, url: transferUrl(p), sizeEstimate: p.sizeEstimate });
           } catch (e2) {
             upsertTransfer({
               id, title: e.title || e.videoId, loaded: 0, total: null,
-              status: 'error', error: e2 instanceof Error ? e2.message : 'prepare failed',
+              status: 'error', error: e2 instanceof Error ? e2.message : 'prepare failed', stage: 'end',
             });
           }
         }
@@ -78,7 +84,7 @@ export default function Home() {
           `${media.title || 'playlist'}.zip`, zipItems,
           (i, loaded, total) => {
             const it = zipItems[i];
-            upsertTransfer({ id: `zip-${i}`, title: it.filename, loaded, total, status: 'working' });
+            upsertTransfer({ id: `zip-${i}`, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
           },
           () => {},
           abortRef.current?.signal,

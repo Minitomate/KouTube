@@ -45,6 +45,7 @@ async def prepare(req: PrepareRequest, request: Request):
     title = (info or {}).get("title", "video")
     filename = f"{sanitize_filename(title)} [{vid}].{req.container}"
     payload = {"u": url, "v": streams["video_url"], "a": streams["audio_url"],
+               "vd": streams["video_direct"], "ad": streams["audio_direct"],
                "c": req.container, "s": list(embed), "f": req.subFormat,
                "n": filename}
     stream_token = T.mint("stream", payload)

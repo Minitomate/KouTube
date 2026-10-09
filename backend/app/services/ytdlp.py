@@ -207,11 +207,17 @@ def _height_of(f: dict) -> int:
         return 0
 
 
+def _is_direct(f: dict) -> bool:
+    return (f.get("protocol") or "https") in ("http", "https")
+
+
 def pick_streams(info: dict, container: str, quality: int | str,
                  audio_lang: str | None = None) -> dict:
     """Pick direct stream URLs from a full (non-flat) info dict.
 
-    Returns {video_url, audio_url|None, merge_required, size_estimate}.
+    Returns {video_url, audio_url|None, merge_required, size_estimate,
+    video_direct, audio_direct}. Manifest-based formats (HLS/DASH) are only
+    chosen when no plain-HTTP format exists; mux lets ffmpeg fetch those.
     Raises ValueError('no-formats') when nothing usable is found.
     """
     formats = [f for f in (info.get("formats") or []) if f.get("url")]
@@ -225,8 +231,10 @@ def pick_streams(info: dict, container: str, quality: int | str,
             lang_match = [f for f in pool if (f.get("language") or "") == audio_lang]
             if lang_match:
                 pool = lang_match
-        return sorted(pool, key=lambda f: (f.get("abr") or 0, f.get("tbr") or 0),
+        pool = sorted(pool, key=lambda f: (f.get("abr") or 0, f.get("tbr") or 0),
                       reverse=True)
+        direct = [f for f in pool if _is_direct(f)]
+        return direct or pool
 
     if audio_only:
         pool = audio_pool()
@@ -235,7 +243,8 @@ def pick_streams(info: dict, container: str, quality: int | str,
         best = pool[0]
         return {"video_url": None, "audio_url": best["url"],
                 "merge_required": False,
-                "size_estimate": best.get("filesize") or best.get("filesize_approx")}
+                "size_estimate": best.get("filesize") or best.get("filesize_approx"),
+                "video_direct": True, "audio_direct": _is_direct(best)}
 
     q = None if quality == "best" else int(quality)
     videos = [f for f in formats if (f.get("vcodec") or "none") != "none"]
@@ -246,22 +255,28 @@ def pick_streams(info: dict, container: str, quality: int | str,
     progressive = [f for f in videos
                    if (f.get("acodec") or "none") != "none"
                    and (q is None or _height_of(f) <= q)]
-    if progressive:
-        best = sorted(progressive,
+    prog_direct = [f for f in progressive if _is_direct(f)]
+    if prog_direct or progressive:
+        best = sorted(prog_direct or progressive,
                       key=lambda f: (_height_of(f), f.get("tbr") or 0),
                       reverse=True)[0]
         return {"video_url": best["url"], "audio_url": None,
                 "merge_required": False,
-                "size_estimate": best.get("filesize") or best.get("filesize_approx")}
-    videos = sorted(videos, key=lambda f: (_height_of(f), f.get("tbr") or 0),
-                    reverse=True)
+                "size_estimate": best.get("filesize") or best.get("filesize_approx"),
+                "video_direct": _is_direct(best), "audio_direct": True}
+    pool = sorted(videos, key=lambda f: (_height_of(f), f.get("tbr") or 0),
+                  reverse=True)
+    direct_pool = [f for f in pool if _is_direct(f)]
+    videos = direct_pool or pool
     audios = audio_pool()
     if not videos or not audios:
         raise ValueError("no-formats")
     size = ((videos[0].get("filesize") or videos[0].get("filesize_approx") or 0)
             + (audios[0].get("filesize") or audios[0].get("filesize_approx") or 0)) or None
     return {"video_url": videos[0]["url"], "audio_url": audios[0]["url"],
-            "merge_required": True, "size_estimate": size}
+            "merge_required": True, "size_estimate": size,
+            "video_direct": _is_direct(videos[0]),
+            "audio_direct": _is_direct(audios[0])}
 
 
 def fetch_sub_texts(url: str, langs: list[str], fmt: str = "srt") -> dict[str, str]:
