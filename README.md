@@ -17,19 +17,26 @@ Paste a YouTube link, pick format / quality / audio / manual captions, download.
 - Frontend: React + Vite + TanStack Query + Zustand (`frontend/`, port `5173`)
 - E2E: Playwright (`e2e/`)
 
-## Quickstart
+## Quickstart (Ubuntu/Debian — avoids PEP 668 `externally-managed-environment`)
 
 ```bash
+# one-shot setup (creates project-local .venv via uv, no sudo)
+bash scripts/setup.sh
+source .venv/bin/activate
+
 # backend
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --port 8000
+make backend   # uvicorn app.main:app --port 8000
 
 # frontend (new terminal)
 cd frontend
 npm install
 npm run dev -- --port 5173
 ```
+
+> Never `pip install` system-wide on Ubuntu 24.04+: it is PEP 668
+> externally-managed. Always use the `.venv` above (`source .venv/bin/activate`)
+> or `uv pip install --python .venv/bin/python ...`.
+> `make setup` / `scripts/setup.sh` does this for you.
 
 ## Filename template
 
