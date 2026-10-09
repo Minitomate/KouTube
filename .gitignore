@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+.venv/
+downloads/*
+!downloads/.gitkeep
+dist/
+playwright-report/
+test-results/
+*.log
+.DS_Store

@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+yt-dlp
+sse-starlette
+pydantic-settings
+aiofiles
+apscheduler
+pycountry
+structlog

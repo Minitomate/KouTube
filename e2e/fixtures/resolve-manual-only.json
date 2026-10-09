@@ -1,0 +1,26 @@
+{
+  "videoId": "dQw4w9WgXcQ",
+  "title": "Manual captions fixture",
+  "duration": 212,
+  "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+  "qualities": ["best", "1080", "720", "480"],
+  "audioTracks": [
+    { "id": "original", "label": "Original" },
+    { "id": "en", "label": "English", "lang": "en" }
+  ],
+  "captions": [
+    { "id": "en", "label": "English", "lang": "en", "manual": true },
+    { "id": "es", "label": "Spanish", "lang": "es", "manual": true }
+  ],
+  "isPlaylist": false,
+  "raw": {
+    "subtitles": {
+      "en": [{ "ext": "vtt", "url": "https://example.test/subs/en.vtt" }],
+      "es": [{ "ext": "vtt", "url": "https://example.test/subs/es.vtt" }]
+    },
+    "automatic_captions": {
+      "en": [{ "ext": "vtt", "url": "https://example.test/auto/en.vtt" }]
+    }
+  },
+  "_note": "automatic_captions must be ignored: only subtitles (manual) surface as captions"
+}

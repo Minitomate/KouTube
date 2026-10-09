@@ -1,0 +1,130 @@
+/* KouTube M3 Expressive tokens (CSS-only, no heavy dep).
+ * Seed: #6750A4. Shapes: pill = 999px. Buttons h 48-56px.
+ *
+ * UPGRADE PATH to @language-lit/material3-expressive:
+ *   1. npm i @language-lit/material3-expressive
+ *   2. Replace .pill-btn/.chip/.segmented classes with
+ *      <md-filled-button>, <md-filter-chip>, <md-segmented-button> etc.
+ *   3. Keep these CSS vars as fallback: import tokens then delete
+ *      this file's :root blocks. Component props (aria-labels, classNames)
+ *      are already 1:1 with M3 naming so migration is mechanical.
+ */
+
+:root,
+[data-theme='light'] {
+  --seed: #6750a4;
+  --primary: #6750a4;
+  --on-primary: #ffffff;
+  --primary-container: #eaddff;
+  --on-primary-container: #21005d;
+  --secondary-container: #e8def8;
+  --on-secondary-container: #1d192b;
+  --surface: #fef7ff;
+  --on-surface: #1d1b20;
+  --surface-container: #f3edf7;
+  --surface-container-high: #ece6f0;
+  --outline: #79747e;
+  --outline-variant: #cac4d0;
+  --error: #b3261e;
+  --bg: #fef7ff;
+  --pill-h: 52px;
+  --radius-pill: 999px;
+  --radius-card: 24px;
+}
+
+[data-theme='dark'] {
+  --primary: #d0bcff;
+  --on-primary: #381e72;
+  --primary-container: #4f378b;
+  --on-primary-container: #eaddff;
+  --secondary-container: #4a4458;
+  --on-secondary-container: #e8def8;
+  --surface: #141218;
+  --on-surface: #e6e0e9;
+  --surface-container: #211f26;
+  --surface-container-high: #2b2930;
+  --outline: #938f99;
+  --outline-variant: #49454f;
+  --error: #f2b8b5;
+  --bg: #141218;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--on-surface);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+.app-shell { max-width: 640px; margin: 0 auto; padding: 16px 16px 120px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.2px; }
+.brand span { color: var(--primary); }
+
+.stepper { display: flex; gap: 8px; margin: 12px 0 20px; }
+.step { flex: 1; height: 6px; border-radius: 999px; background: var(--surface-container-high); }
+.step.active { background: var(--primary); }
+
+.card {
+  background: var(--surface-container);
+  border-radius: var(--radius-card);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+
+.pill-btn {
+  border: 0; border-radius: var(--radius-pill);
+  min-height: var(--pill-h); padding: 0 24px;
+  font-size: 15px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.pill-btn.filled { background: var(--primary); color: var(--on-primary); }
+.pill-btn.tonal { background: var(--secondary-container); color: var(--on-secondary-container); }
+.pill-btn.outlined { background: transparent; border: 1px solid var(--outline); color: var(--on-surface); }
+.pill-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.urlbar { display: flex; gap: 8px; }
+.urlbar input {
+  flex: 1; border-radius: var(--radius-pill); min-height: var(--pill-h);
+  border: 1px solid var(--outline-variant); padding: 0 20px; font-size: 15px;
+  background: var(--surface); color: var(--on-surface);
+}
+.field-error { color: var(--error); font-size: 13px; margin-top: 8px; min-height: 18px; }
+
+.segmented { display: flex; background: var(--surface-container-high); border-radius: var(--radius-pill); padding: 4px; gap: 4px; }
+.segmented button {
+  flex: 1; border: 0; border-radius: var(--radius-pill); min-height: 48px;
+  font-weight: 600; cursor: pointer; background: transparent; color: var(--on-surface);
+}
+.segmented button[aria-pressed='true'] { background: var(--secondary-container); color: var(--on-secondary-container); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  border-radius: var(--radius-pill); min-height: 40px; padding: 0 16px;
+  border: 1px solid var(--outline-variant); background: transparent;
+  color: var(--on-surface); cursor: pointer; font-size: 14px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.chip.tonal[aria-pressed='true'] { background: var(--secondary-container); border-color: transparent; font-weight: 700; }
+.chip.filter[aria-pressed='true'] { background: var(--primary-container); color: var(--on-primary-container); border-color: transparent; }
+.badge { font-size: 11px; background: var(--primary); color: var(--on-primary); border-radius: 999px; padding: 2px 8px; }
+
+.select-pill {
+  border-radius: var(--radius-pill); min-height: 48px; padding: 0 18px;
+  border: 1px solid var(--outline); background: var(--surface); color: var(--on-surface); font-size: 14px;
+}
+
+.progress-pill { background: var(--surface-container-high); border-radius: var(--radius-pill); height: 20px; overflow: hidden; }
+.progress-pill > div { height: 100%; background: var(--primary); border-radius: var(--radius-pill); transition: width 0.2s; }
+
+.sticky-cta {
+  position: fixed; left: 0; right: 0; bottom: 16px;
+  display: flex; justify-content: center; pointer-events: none;
+}
+.sticky-cta > div { pointer-events: auto; display: flex; gap: 8px; background: var(--surface-container-high); padding: 8px; border-radius: 999px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); }
+.empty { color: var(--outline); font-size: 14px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.meta { font-size: 13px; color: var(--outline); }
+.job { border-top: 1px solid var(--outline-variant); padding: 10px 0; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
