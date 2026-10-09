@@ -1,9 +1,11 @@
 node_modules/
 __pycache__/
 .venv/
-downloads/*
+downloads/
+**/downloads/
 !downloads/.gitkeep
 dist/
+**/dist/
 playwright-report/
 test-results/
 *.log

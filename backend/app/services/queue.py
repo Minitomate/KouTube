@@ -16,7 +16,19 @@ from app.services.security import normalize_to_url
 
 log = structlog.get_logger()
 
-DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "downloads"))
+def _default_downloads_dir() -> str:
+    if os.environ.get("DOWNLOADS_DIR"):
+        return os.environ["DOWNLOADS_DIR"]
+    # Walk up from here to repo root (dir containing Makefile), else backend/downloads.
+    cur = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    for _ in range(4):
+        if os.path.exists(os.path.join(cur, "Makefile")):
+            return os.path.join(cur, "downloads")
+        cur = os.path.dirname(cur)
+    return os.path.join(os.path.dirname(__file__), "..", "..", "downloads")
+
+
+DOWNLOADS_DIR = _default_downloads_dir()
 DISK_CAP_BYTES = 2 * 1024 * 1024 * 1024
 MAX_CONCURRENT = 3
 

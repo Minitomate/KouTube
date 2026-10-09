@@ -9,6 +9,9 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
-    import yt_dlp
     ffmpeg = await run_in_threadpool(get_ffmpeg_version)
-    return {"status": "ok", "ytdlp": getattr(yt_dlp, "__version__", "unknown"), "ffmpeg": ffmpeg}
+    try:
+        from yt_dlp.version import __version__ as ytdlp_version
+    except Exception:
+        ytdlp_version = "unknown"
+    return {"status": "ok", "ytdlp": ytdlp_version, "ffmpeg": ffmpeg}
