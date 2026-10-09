@@ -4,6 +4,7 @@ Token must have been minted by /api/prepare (HMAC, 10 min TTL).
 """
 from __future__ import annotations
 import httpx
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
@@ -11,6 +12,7 @@ from starlette.background import BackgroundTask
 from app.services import tokens as T
 
 router = APIRouter()
+log = structlog.get_logger()
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 
 
@@ -48,6 +50,11 @@ async def stream(token: str, request: Request):
                 if await request.is_disconnected():
                     break
                 yield chunk
+        except (httpx.RequestError, httpx.StreamClosed) as exc:
+            # Upstream throttled/dropped mid-transfer: end the response so the
+            # client sees EOF and its truncation detector fires (error state,
+            # never a silent hang).
+            log.warning("upstream interrupted", error=str(exc))
         finally:
             await r.aclose()
             await client.aclose()

@@ -63,6 +63,49 @@ test.describe('download (user-end)', () => {
     expect(posted).toMatchObject({ container: 'mp3', quality: 'best' });
   });
 
+test.describe('stall recovery (user-end)', () => {
+  test('truncated stream surfaces error, never hangs', async ({ page }) => {
+    await mockResolve(page);
+    await mockPrepare(page);
+    // Declares 100 bytes via content-range but always delivers 5, then EOF.
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({
+        status: 206,
+        headers: { 'content-range': 'bytes 0-4/100', 'content-type': 'video/mp4' },
+        body: 'short',
+      }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.download();
+    await expect(page.getByText(/incomplete/i).first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('short read resumes with Range header', async ({ page }) => {
+    await mockResolve(page);
+    await mockPrepare(page);
+    const ranges: (string | null)[] = [];
+    await page.route('**/api/stream*', (r) => {
+      ranges.push(r.request().headers()['range'] ?? null);
+      // Always delivers the same 5 bytes: resume appends 5+5=10=total → saved.
+      return r.fulfill({
+        status: 206,
+        headers: { 'content-range': 'bytes 0-4/10', 'content-type': 'video/mp4' },
+        body: 'short',
+      });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.download();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    expect(ranges.length).toBeGreaterThan(1);
+    expect(ranges[0]).toBe('bytes=0-');
+    expect(ranges[1]).toBe('bytes=5-');
+  });
+});
+
   test('merge path uses mux URL', async ({ page }) => {
     await mockResolve(page);
     await page.route('**/api/prepare', (r) =>

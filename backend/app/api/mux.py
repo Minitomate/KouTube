@@ -9,6 +9,7 @@ import asyncio
 import os
 import signal
 import tempfile
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -16,6 +17,7 @@ from app.services import tokens as T
 from app.services import ytdlp as Y
 
 router = APIRouter()
+log = structlog.get_logger()
 _MUX_SEM = asyncio.Semaphore(2)
 
 
@@ -66,7 +68,12 @@ async def mux(token: str, request: Request):
             "code": "bad-token", "message": "mux needs video+audio URLs"})
 
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error",
-           "-i", vurl, "-i", aurl]
+           "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+           "-timeout", "30000000",
+           "-i", vurl,
+           "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+           "-timeout", "30000000",
+           "-i", aurl]
     for sf in sub_files:
         cmd += ["-i", sf]
     cmd += ["-map", "0:v", "-map", "1:a", "-c", "copy"]
@@ -99,7 +106,12 @@ async def mux(token: str, request: Request):
                 if not chunk:
                     break
                 yield chunk
-            await proc.wait()
+            rc = await proc.wait()
+            if rc != 0:
+                # Client can't be re-signalled mid-body (headers sent), but a
+                # nonzero exit is logged and the short stream trips the
+                # client's truncation detector instead of hanging.
+                log.error("ffmpeg mux failed", returncode=rc)
         finally:
             if proc.returncode is None:
                 try:

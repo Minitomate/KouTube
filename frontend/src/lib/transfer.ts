@@ -48,15 +48,32 @@ export function transferUrl(p: Prepare): string {
     : `/api/stream?token=${encodeURIComponent(p.streamToken)}`;
 }
 
-function progressPipe(total: number | null, onProgress: (loaded: number, total: number | null) => void) {
-  let loaded = 0;
-  return new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      loaded += chunk.byteLength;
-      controller.enqueue(chunk);
-      onProgress(loaded, total);
-    },
+export interface FetchOpts {
+  /** Idle stall timeout before resume/abort. Defaults to 30s (tests pass ~200ms). */
+  idleTimeoutMs?: number;
+  /** Max resume attempts after stall/truncation. Defaults to 3. */
+  maxResumes?: number;
+}
+
+class StallError extends Error {}
+
+function withTimeout<T>(p: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new StallError(`stalled ${ms}ms without bytes`)), ms);
   });
+  const onAbort = () => { if (timer !== undefined) clearTimeout(timer); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  return Promise.race([p, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  });
+}
+
+function totalFrom206(res: Response): number | null {
+  const cr = res.headers.get('content-range'); // bytes 0-99/3449447
+  const m = cr && /\/(\d+)\s*$/.exec(cr);
+  return m ? Number(m[1]) : null;
 }
 
 export async function downloadToDisk(
@@ -65,45 +82,89 @@ export async function downloadToDisk(
   sizeEstimate: number | null,
   onProgress: (loaded: number, total: number | null) => void,
   signal?: AbortSignal,
+  opts?: FetchOpts,
 ): Promise<void> {
-  const res = await fetch(url, { signal });
-  if (!res.ok || !res.body) throw new Error(`Download failed (HTTP ${res.status})`);
-  const total = Number(res.headers.get('content-length')) || sizeEstimate;
+  const idleMs = opts?.idleTimeoutMs ?? 30_000;
+  const maxResumes = opts?.maxResumes ?? 3;
   const anyWin = window as unknown as {
     showSaveFilePicker?: (o: unknown) => Promise<{
       createWritable: () => Promise<FileSystemWritableFileStream>;
     }>;
   };
   const automation = (navigator as unknown as { webdriver?: boolean }).webdriver === true;
+  let writable: FileSystemWritableFileStream | null = null;
   if (anyWin.showSaveFilePicker && !automation) {
     try {
       const handle = await anyWin.showSaveFilePicker({ suggestedName: filename });
-      const writable = await handle.createWritable();
-      await res.body.pipeThrough(progressPipe(total, onProgress)).pipeTo(writable);
-      return;
+      writable = await handle.createWritable();
     } catch (e) {
-      // User cancellation aborts; headless/denied environments fall through
-      // to the anchor fallback below.
       if (e instanceof DOMException && e.name === 'AbortError') throw e;
+      writable = null; // headless/denied → anchor fallback below
     }
   }
-  // Fallback: buffer + anchor (Firefox/Safari, smaller files only).
-  const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
+  const write = async (c: Uint8Array) => {
+    if (writable) {
+      await writable.write(new Uint8Array(c.buffer, c.byteOffset, c.byteLength) as Uint8Array<ArrayBuffer>);
+    } else chunks.push(c);
+  };
+
+  // Always request a byte range: defeats upstream throttling of full-file
+  // requests and enables resume. honorsRange tracks server support.
   let loaded = 0;
+  let total: number | null = sizeEstimate;
+  let honorsRange = false;
+  let resumes = 0;
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.byteLength;
-    onProgress(loaded, total);
+    signal?.throwIfAborted();
+    const res = await fetch(url, {
+      signal,
+      headers: { Range: `bytes=${loaded}-` },
+    });
+    if (res.status !== 200 && res.status !== 206) {
+      throw new Error(`Download failed (HTTP ${res.status})`);
+    }
+    if (!res.body) throw new Error('Download failed (empty body)');
+    honorsRange = res.status === 206;
+    if (honorsRange) total = totalFrom206(res) ?? total;
+    else if (loaded === 0) total = Number(res.headers.get('content-length')) || total;
+    else throw new Error('Server does not support resume; restart the download');
+    const reader = res.body.getReader();
+    try {
+      for (;;) {
+        let read: ReadableStreamReadResult<Uint8Array>;
+        try {
+          read = await withTimeout(reader.read(), idleMs, signal);
+        } catch (e) {
+          if (e instanceof StallError) break; // treat stall as stream end → resume/exhaust below
+          throw e;
+        }
+        if (read.done) break;
+        await write(read.value);
+        loaded += read.value.byteLength;
+        onProgress(loaded, total);
+      }
+    } finally {
+      try { await reader.cancel(); } catch { /* already closed */ }
+      reader.releaseLock();
+    }
+    if (total !== null && loaded < total) {
+      if (honorsRange && resumes < maxResumes) { resumes += 1; continue; }
+      throw new Error(`Incomplete download (${loaded}/${total} bytes)`);
+    }
+    break;
   }
-  const blob = new Blob(chunks as BlobPart[]);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+  if (writable) {
+    await writable.close();
+  } else {
+    const blob = new Blob(chunks as BlobPart[]);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+  }
+  onProgress(loaded, total);
 }
 
 export interface ZipItem {
@@ -125,9 +186,15 @@ export async function downloadZip(
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     try {
-      const res = await fetch(it.url, { signal });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-      const total = Number(res.headers.get('content-length')) || it.sizeEstimate;
+      const res = await fetch(it.url, {
+        signal,
+        headers: { Range: 'bytes=0-' },
+      });
+      if (res.status !== 200 && res.status !== 206) throw new Error(`HTTP ${res.status}`);
+      if (!res.body) throw new Error('empty body');
+      const total = res.status === 206
+        ? totalFrom206(res) ?? it.sizeEstimate
+        : Number(res.headers.get('content-length')) || it.sizeEstimate;
       const reader = res.body.getReader();
       const chunks: Uint8Array[] = [];
       let loaded = 0;
@@ -137,6 +204,11 @@ export async function downloadZip(
         chunks.push(value);
         loaded += value.byteLength;
         onItem(i, loaded, total);
+      }
+      try { await reader.cancel(); } catch { /* closed */ }
+      reader.releaseLock();
+      if (total !== null && loaded < total) {
+        throw new Error(`incomplete (${loaded}/${total} bytes)`);
       }
       zip.file(it.filename, new Blob(chunks as BlobPart[]));
     } catch (e) {
