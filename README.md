@@ -4,17 +4,18 @@ Paste a YouTube link, pick format / quality / audio / manual captions, download.
 
 ## Features
 
-- Format: video (mp4) or audio-only (mp3)
-- Quality: best / 1080 / 720 / 480 (video only)
+- Format: video (mp4/mkv) or audio-only (mp3/m4a/opus/wav/flac)
+- Quality: full range incl. 4K (progressive streams direct, dash merged on the fly)
 - Audio: original track or dubbed track picker
-- Manual captions only — auto-generated captions are never listed
-- Captions: embed + optional `.srt` sidecar
-- Playlist expand + batched queue with cancel / retry
+- Manual captions only — auto-generated captions are never listed; embedded into video
+- Playlist expand + single-ZIP batch (max 10, skip-and-report failures)
+- **User-end downloads**: files stream straight to your disk (File System Access
+  streaming, anchor fallback). The server stores nothing — no jobs, no waiting.
 
 ## Stack
 
-- Backend: FastAPI + yt-dlp + ffmpeg (`backend/`, port `8000`)
-- Frontend: React + Vite + TanStack Query + Zustand (`frontend/`, port `5173`)
+- Backend (stateless): FastAPI + yt-dlp + ffmpeg — `resolve`/`prepare`/`stream`/`mux` (`backend/`, port `8000`)
+- Frontend: React + Vite + TanStack Query + Zustand + JSZip (`frontend/`, port `5173`)
 - E2E: Playwright (`e2e/`)
 
 ## Quickstart (Ubuntu/Debian — avoids PEP 668 `externally-managed-environment`)
@@ -54,12 +55,13 @@ Do not restyle outside `frontend/src/theme.css` tokens.
 ```bash
 cd e2e
 npm install
-npx playwright install --with-deps chromium
-npm test
+npx playwright install chromium
+npx playwright test -c smoke.config.ts --project=chromium
 ```
 
-Config starts both servers (`playwright.config.ts`): frontend `:5173`, backend `:8000`.
-Trace on retry, screenshots on failure.
+`playwright.config.ts` starts both servers (frontend `:5173`, backend via
+`../.venv/bin/python -m uvicorn`); `smoke.config.ts` reuses your running servers.
+Trace on retry, screenshots on failure, downloads accepted.
 
 ## Legal
 

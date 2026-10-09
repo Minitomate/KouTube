@@ -10,8 +10,8 @@ test.describe('captions (manual-only)', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await expect(page.getByLabel('Caption English')).toBeVisible();
-    await expect(page.getByLabel('Caption Spanish')).toBeVisible();
+    await expect(page.getByLabel('Caption en - English')).toBeVisible();
+    await expect(page.getByLabel('Caption es - Spanish')).toBeVisible();
     await expect(page.getByText('Manual-only').first()).toBeVisible();
   });
 
@@ -20,29 +20,37 @@ test.describe('captions (manual-only)', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    // Fixture raw.automatic_captions.en must be ignored: only 2 caption buttons.
+    // Fixture automatic_captions.en must be ignored: only 2 caption buttons.
     await expect(page.getByRole('group', { name: 'Captions' }).getByRole('button')).toHaveCount(2);
     await expect(page.getByText(/auto-generated/i)).toHaveCount(0);
   });
 
-  test('embed + srt sidecar payload', async ({ page }) => {
+  test('prepare carries embedCaptions', async ({ page }) => {
     await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
     let posted: Record<string, unknown> | undefined;
-    await page.route('**/api/download', (r) => {
+    await page.route('**/api/prepare', (r) => {
       posted = r.request().postDataJSON() as Record<string, unknown>;
-      return r.fulfill({ json: { job_id: 'job-cap' } });
+      return r.fulfill({
+        json: {
+          filename: 'cap.mp4', container: 'mp4', mergeRequired: true,
+          sizeEstimate: 4, streamToken: 's', muxToken: 'm', captions: ['en', 'es'],
+        },
+      });
     });
+    await page.route('**/api/mux*', (r) =>
+      r.fulfill({ status: 200, body: 'x', contentType: 'video/mp4' }),
+    );
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await app.pickCaptions('English', 'Spanish');
+    await app.pickCaptions('en - English', 'es - Spanish');
     await app.download();
-    expect(posted).toMatchObject({ captions: expect.arrayContaining(['en', 'es']) });
+    expect(posted).toMatchObject({ embedCaptions: expect.arrayContaining(['en', 'es']) });
   });
 
   test('empty state when no captions', async ({ page }) => {
     await page.route('**/api/resolve', (r) =>
-      r.fulfill({ json: { ...manualOnly, captions: [] } }),
+      r.fulfill({ json: { ...manualOnly, manualCaptions: [] } }),
     );
     const app = new KouTubePage(page);
     await app.goto();

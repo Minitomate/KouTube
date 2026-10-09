@@ -5,21 +5,31 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import resolve, download, jobs, files, health
-from app.services import queue as Q
-from app.services.cleanup import start_cleanup, stop_cleanup
+from app.api import resolve, prepare, stream, mux, health
+from app.services import tokens as _tokens  # noqa: F401 (token mint/verify side-effects)
+from app.services import limits as L
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from fastapi.responses import JSONResponse
 
 structlog.configure(processors=[structlog.processors.JSONRenderer()])
+
+limiter = L.limiter
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    start_cleanup(Q.DOWNLOADS_DIR, Q.jobs)
     yield
-    stop_cleanup()
 
 
 app = FastAPI(title="KouTube API", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded,
+                          lambda req, exc: JSONResponse(
+                              status_code=429,
+                              content={"detail": {"code": "rate-limited",
+                                                 "message": "Too many requests; slow down."}}))
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,9 +38,9 @@ app.add_middleware(
 )
 
 app.include_router(resolve.router, prefix="/api")
-app.include_router(download.router, prefix="/api")
-app.include_router(jobs.router, prefix="/api")
-app.include_router(files.router, prefix="/api")
+app.include_router(prepare.router, prefix="/api")
+app.include_router(stream.router, prefix="/api")
+app.include_router(mux.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 
 

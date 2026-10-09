@@ -198,3 +198,103 @@ def build_ydl_opts(job_dir: str, req, progress_hook) -> dict:
 
 def truncated_outtmpl(title: str, vid: str, ext: str) -> str:
     return f"{sanitize_filename(title)} [{vid}].{ext}"
+
+
+def _height_of(f: dict) -> int:
+    try:
+        return int(f.get("height") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def pick_streams(info: dict, container: str, quality: int | str,
+                 audio_lang: str | None = None) -> dict:
+    """Pick direct stream URLs from a full (non-flat) info dict.
+
+    Returns {video_url, audio_url|None, merge_required, size_estimate}.
+    Raises ValueError('no-formats') when nothing usable is found.
+    """
+    formats = [f for f in (info.get("formats") or []) if f.get("url")]
+    if not formats:
+        raise ValueError("no-formats")
+    audio_only = container in AUDIO_ONLY
+
+    def audio_pool() -> list[dict]:
+        pool = [f for f in formats if (f.get("acodec") or "none") != "none"]
+        if audio_lang:
+            lang_match = [f for f in pool if (f.get("language") or "") == audio_lang]
+            if lang_match:
+                pool = lang_match
+        return sorted(pool, key=lambda f: (f.get("abr") or 0, f.get("tbr") or 0),
+                      reverse=True)
+
+    if audio_only:
+        pool = audio_pool()
+        if not pool:
+            raise ValueError("no-formats")
+        best = pool[0]
+        return {"video_url": None, "audio_url": best["url"],
+                "merge_required": False,
+                "size_estimate": best.get("filesize") or best.get("filesize_approx")}
+
+    q = None if quality == "best" else int(quality)
+    videos = [f for f in formats if (f.get("vcodec") or "none") != "none"]
+    if q is not None:
+        capped = [f for f in videos if _height_of(f) <= q]
+        videos = capped or videos
+    # Prefer progressive (muxed) single file at/below requested quality: no merge.
+    progressive = [f for f in videos
+                   if (f.get("acodec") or "none") != "none"
+                   and (q is None or _height_of(f) <= q)]
+    if progressive:
+        best = sorted(progressive,
+                      key=lambda f: (_height_of(f), f.get("tbr") or 0),
+                      reverse=True)[0]
+        return {"video_url": best["url"], "audio_url": None,
+                "merge_required": False,
+                "size_estimate": best.get("filesize") or best.get("filesize_approx")}
+    videos = sorted(videos, key=lambda f: (_height_of(f), f.get("tbr") or 0),
+                    reverse=True)
+    audios = audio_pool()
+    if not videos or not audios:
+        raise ValueError("no-formats")
+    size = ((videos[0].get("filesize") or videos[0].get("filesize_approx") or 0)
+            + (audios[0].get("filesize") or audios[0].get("filesize_approx") or 0)) or None
+    return {"video_url": videos[0]["url"], "audio_url": audios[0]["url"],
+            "merge_required": True, "size_estimate": size}
+
+
+def fetch_sub_texts(url: str, langs: list[str], fmt: str = "srt") -> dict[str, str]:
+    """Download manual subtitle texts to an OS-temp dir and return {lang: text}."""
+    import os
+    import tempfile
+    if not langs:
+        return {}
+    tmp = tempfile.mkdtemp(prefix="koutube-subs-")
+    opts = {**BASE_OPTS, "skip_download": True, "writesubtitles": True,
+            "writeautomaticsub": False, "subtitleslangs": list(langs),
+            "subtitlesformat": fmt,
+            "outtmpl": os.path.join(tmp, "%(id)s.%(ext)s")}
+    with YoutubeDL(opts) as ydl:
+        ydl.extract_info(url, download=True)
+    out: dict[str, str] = {}
+    for fname in os.listdir(tmp):
+        fpath = os.path.join(tmp, fname)
+        try:
+            # yt-dlp names subtitle files <id>.<lang>.<ext>
+            parts = fname.rsplit(".", 2)
+            lang = parts[1] if len(parts) == 3 else fname
+            with open(fpath, encoding="utf-8", errors="replace") as fh:
+                out[lang] = fh.read()
+        except OSError:
+            pass
+        finally:
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+    try:
+        os.rmdir(tmp)
+    except OSError:
+        pass
+    return out

@@ -10,6 +10,7 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'on-first-retry',
+    acceptDownloads: true,
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
@@ -21,7 +22,7 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: 'uvicorn app.main:app --port 8000',
+      command: '../.venv/bin/python -m uvicorn app.main:app --port 8000',
       cwd: '../backend',
       port: 8000,
       reuseExistingServer: !process.env.CI,

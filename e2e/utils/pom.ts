@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-/** Page Object for the KouTube single-page flow. */
+/** Page Object for the KouTube single-page flow (user-end transfers, no jobs). */
 export class KouTubePage {
   constructor(readonly page: Page) {}
 
@@ -46,11 +46,11 @@ export class KouTubePage {
     await this.page.getByLabel('Download', { exact: true }).click();
   }
 
-  async cancelJob(title: string) {
-    await this.page.getByLabel(`Cancel ${title}`).click();
+  async downloadZip() {
+    await this.page.getByRole('button', { name: 'Download ZIP' }).click();
   }
 
-  async retryJob(title: string) {
-    await this.page.getByLabel(`Retry ${title}`).click();
+  async cancelDownload() {
+    await this.page.getByLabel('Cancel download').click();
   }
 }

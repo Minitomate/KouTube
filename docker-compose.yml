@@ -3,10 +3,8 @@ services:
     build: ./backend
     ports:
       - "8000:8000"
-    volumes:
-      - ./downloads:/data
     environment:
-      - DOWNLOADS_DIR=/data
+      - KOUTUBE_SECRET=${KOUTUBE_SECRET:-change-me-in-production}
   frontend:
     build: ./frontend
     ports:

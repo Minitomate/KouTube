@@ -46,14 +46,18 @@ test.describe('resolve', () => {
         json: {
           ...manualOnly,
           title: 'Playlist',
-          isPlaylist: true,
-          playlistCount: 3,
+          is_playlist: true,
+          entries: [
+            { videoId: 'aaa', title: 'One' },
+            { videoId: 'bbb', title: 'Two' },
+            { videoId: 'ccc', title: 'Three' },
+          ],
         },
       }),
     );
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(PLAYLIST);
-    await expect(page.getByText(/playlist 3/i)).toBeVisible();
+    await expect(page.getByText(/playlist · 3 videos/i)).toBeVisible();
   });
 });

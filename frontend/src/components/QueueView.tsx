@@ -1,15 +1,15 @@
 import { useStore } from '../lib/store';
-import JobCard from './JobCard';
+import TransferCard from './TransferCard';
 
-/** Playlist batch view: reuses global defaults, caps at 50 jobs. */
+/** Batch view: per-file user-end transfers (no server jobs). */
 export default function QueueView() {
   const { queue, media } = useStore();
   if (media?.isPlaylist) {
     return (
       <div className="card">
-        <h2>Queue · playlist ({Math.min(media.playlistCount ?? queue.length, 50)}/50)</h2>
-        {queue.length === 0 && <p className="empty">Jobs will appear here after you press Download.</p>}
-        {queue.map((j) => <JobCard key={j.id} jobId={j.id} />)}
+        <h2>Queue · playlist ({Math.min(media.playlistCount ?? queue.length, 10)}/10)</h2>
+        {queue.length === 0 && <p className="empty">Files will appear here after you press Download ZIP.</p>}
+        {queue.map((j) => <TransferCard key={j.id} transferId={j.id} />)}
       </div>
     );
   }
@@ -17,7 +17,7 @@ export default function QueueView() {
   return (
     <div className="card">
       <h2>Downloads</h2>
-      {queue.map((j) => <JobCard key={j.id} jobId={j.id} />)}
+      {queue.map((j) => <TransferCard key={j.id} transferId={j.id} />)}
     </div>
   );
 }

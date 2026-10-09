@@ -4,39 +4,63 @@ import manualOnly from '../fixtures/resolve-manual-only.json' with { type: 'json
 
 const PLAYLIST = 'https://www.youtube.com/playlist?list=PL123';
 
-test.describe('playlist batch', () => {
+function playlistResolve() {
+  return {
+    ...manualOnly,
+    title: 'Batch playlist',
+    is_playlist: true,
+    entries: [
+      { videoId: 'aaa', title: 'One' },
+      { videoId: 'bbb', title: 'Two' },
+      { videoId: 'ccc', title: 'Three' },
+    ],
+  };
+}
+
+test.describe('playlist batch (single ZIP, user-end)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/resolve', (r) =>
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: playlistResolve() }));
+  });
+
+  test('3-item batch zips', async ({ page }) => {
+    await page.route('**/api/prepare', (r) =>
       r.fulfill({
-        json: { ...manualOnly, title: 'Batch playlist', isPlaylist: true, playlistCount: 3 },
+        json: {
+          filename: 'item.mp4', container: 'mp4', mergeRequired: false,
+          sizeEstimate: 5, streamToken: 'tok', muxToken: null, captions: [],
+        },
       }),
     );
-  });
-
-  test('3-item batch enqueues', async ({ page }) => {
-    const ids = ['job-1', 'job-2', 'job-3'];
-    await page.route('**/api/download', (r) => r.fulfill({ json: { job_id: ids.shift() ?? 'job-x' } }));
-    const app = new KouTubePage(page);
-    await app.goto();
-    await app.inspectUrl(PLAYLIST);
-    // One start per entry (mocked as sequential starts).
-    for (let i = 0; i < 3; i++) await app.download();
-    await expect(page.getByRole('progressbar').first()).toBeVisible();
-  });
-
-  test('cancel + retry flow', async ({ page }) => {
-    await page.route('**/api/download', (r) => r.fulfill({ json: { job_id: 'job-c' } }));
-    await page.route('**/api/jobs/job-c', (r) =>
-      r.request().method() === 'DELETE' ? r.fulfill({ json: { ok: true } }) : r.continue(),
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: 'bytes!', contentType: 'video/mp4' }),
     );
-    await page.route('**/api/jobs/job-c/retry', (r) => r.fulfill({ json: { job_id: 'job-r' } }));
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(PLAYLIST);
-    await app.download();
-    // Cancel and retry buttons appear on the job card (SSE/progress mocked by UI store).
+    await app.downloadZip();
     await expect(page.getByRole('progressbar').first()).toBeVisible();
-    await expect(page.getByRole('button', { name: /cancel /i }).first()).toBeVisible();
-    // Retry only renders on error/cancelled jobs (see JobCard) — not asserted on fresh queue.
+    await expect(page.getByText('saved ✓').first()).toBeVisible();
+  });
+
+  test('failed item reported, batch continues', async ({ page }) => {
+    let n = 0;
+    await page.route('**/api/prepare', (r) => {
+      n += 1;
+      if (n === 2) return r.fulfill({ status: 400, json: { detail: { code: 'x', message: 'nope' } } });
+      return r.fulfill({
+        json: {
+          filename: `item${n}.mp4`, container: 'mp4', mergeRequired: false,
+          sizeEstimate: 5, streamToken: 'tok', muxToken: null, captions: [],
+        },
+      });
+    });
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: 'bytes!', contentType: 'video/mp4' }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(PLAYLIST);
+    await app.downloadZip();
+    await expect(page.getByText(/nope|failed/i).first()).toBeVisible();
   });
 });

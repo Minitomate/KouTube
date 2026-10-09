@@ -1,9 +1,10 @@
 fastapi
 uvicorn[standard]
 yt-dlp
-sse-starlette
+httpx
+itsdangerous
+slowapi
 pydantic-settings
 aiofiles
-apscheduler
 pycountry
 structlog

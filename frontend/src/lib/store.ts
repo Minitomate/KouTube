@@ -2,7 +2,11 @@ import { create } from 'zustand';
 import type { MediaInfo } from './api';
 
 export type Format = 'video' | 'audio';
-export interface Job { id: string; url: string; title: string; progress: number; status: string }
+export type TransferStatus = 'working' | 'done' | 'error' | 'cancelled';
+export interface Transfer {
+  id: string; title: string; loaded: number; total: number | null;
+  status: TransferStatus; error?: string;
+}
 
 interface State {
   step: 0 | 1 | 2;
@@ -12,11 +16,11 @@ interface State {
   quality: string;
   audioTrack: string;
   captions: string[];
-  queue: Job[];
+  queue: Transfer[];
   theme: 'light' | 'dark';
   set: (p: Partial<State>) => void;
   toggleCaption: (id: string) => void;
-  upsertJob: (j: Job) => void;
+  upsertTransfer: (t: Transfer) => void;
 }
 
 const QUALITIES = ['360', '720', '1080', '1440', '2160', '4320', 'best'];
@@ -40,10 +44,10 @@ export const useStore = create<State>((set) => ({
         ? s.captions.filter((c) => c !== id)
         : [...s.captions, id],
     })),
-  upsertJob: (j) =>
+  upsertTransfer: (t) =>
     set((s) => ({
-      queue: s.queue.some((q) => q.id === j.id)
-        ? s.queue.map((q) => (q.id === j.id ? { ...q, ...j } : q))
-        : [...s.queue.slice(-49), j], // cap playlist batch at 50
+      queue: s.queue.some((q) => q.id === t.id)
+        ? s.queue.map((q) => (q.id === t.id ? { ...q, ...t } : q))
+        : [...s.queue.slice(-49), t], // cap batch at 50
     })),
 }));

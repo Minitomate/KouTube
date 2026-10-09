@@ -51,29 +51,24 @@ class ResolveResponse(BaseModel):
     entries: list[PlaylistEntry] = Field(default_factory=list)
 
 
-class DownloadRequest(BaseModel):
+class PrepareRequest(BaseModel):
     url: str | None = None
     videoId: str | None = None
     container: Container = "mp4"
     quality: int | str = "best"
     audioTrackLang: str | None = None
     embedCaptions: list[str] = Field(default_factory=list)
-    separateCaptions: bool = False
     subFormat: SubFormat = "srt"
 
 
-class DownloadResponse(BaseModel):
-    jobId: str
-    batchId: str | None = None
-
-
-class JobStatus(str, Enum):
-    queued = "queued"
-    downloading = "downloading"
-    merging = "merging"
-    postprocessing = "postprocessing"
-    done = "done"
-    error = "error"
+class PrepareResponse(BaseModel):
+    filename: str
+    container: Container
+    mergeRequired: bool
+    sizeEstimate: int | None = None
+    streamToken: str
+    muxToken: str | None = None
+    captions: list[str] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):
