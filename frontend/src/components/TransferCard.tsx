@@ -3,7 +3,10 @@ import { useStore } from '../lib/store';
 export default function TransferCard({ transferId }: { transferId: string }) {
   const item = useStore((s) => s.queue.find((q) => q.id === transferId));
   if (!item) return null;
-  const pct = item.total ? Math.round((item.loaded / item.total) * 100) : null;
+  // Muxed output (container + subtitle overhead) can exceed the prepare-time
+  // size estimate, and estimates are approximate: never render over 100%.
+  const raw = item.total ? Math.round((item.loaded / item.total) * 100) : null;
+  const pct = raw === null ? null : Math.min(100, raw);
   return (
     <div className="job">
       <div className="row">
