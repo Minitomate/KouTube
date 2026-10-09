@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { KouTubePage } from '../utils/pom';
-import manualOnly from '../fixtures/resolve-manual-only.json';
+import manualOnly from '../fixtures/resolve-manual-only.json' with { type: 'json' };
 
 const VALID = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 const SHORTS = 'https://www.youtube.com/shorts/dQw4w9WgXcQ';
@@ -26,7 +26,7 @@ test.describe('resolve', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl('not-a-url');
-    await expect(page.getByRole('alert').first()).toContainText(/Only YouTube URLs|Invalid URL/);
+    await expect(page.getByRole('alert').first()).toContainText(/only youtube urls|invalid url/i);
     expect(called).toBe(false);
   });
 

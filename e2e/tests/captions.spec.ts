@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { KouTubePage } from '../utils/pom';
-import manualOnly from '../fixtures/resolve-manual-only.json';
+import manualOnly from '../fixtures/resolve-manual-only.json' with { type: 'json' };
 
 const URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
