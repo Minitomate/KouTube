@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps (venv)
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r backend/requirements.txt
+      - name: Compile check
+        run: .venv/bin/python -m py_compile $(find backend/app -name '*.py')
+      - name: Pytest
+        run: .venv/bin/python -m pytest backend/tests -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Typecheck e2e (smoke note)
+        run: |
+          echo "e2e smoke: tsc --noEmit in e2e/ (full Playwright run is manual/nightly)"
+          if [ -f e2e/package.json ]; then (cd e2e && npm ci && npx tsc --noEmit); fi

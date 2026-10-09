@@ -3,7 +3,7 @@
 Stitch project: `projects/10660069281690267134` — title `KouTube`
 Design system: `assets/17027348178686597966` — `KouTube M3 Expressive`
 - Seed `#6750A4`, variant `EXPRESSIVE`, roundness `ROUND_FULL`, fonts `Inter`
-- Tokens applied to screens v2 (light). Dark variant pending.
+- Tokens applied to screens v2 (light). Dark Home done; dark Inspect/Queue pending.
 
 ## Screens generated
 1. Home (`screens/ac1b99d98e4f40de8d8d59279a10159b`) — compact 640px column, 56px pill URL input + Paste, filled Inspect CTA, tonal/outlined preset pills, recent downloads cards.
@@ -13,5 +13,7 @@ Design system: `assets/17027348178686597966` — `KouTube M3 Expressive`
 3. Queue/Batch (`screens/e324da2c3292444f905945583c3f53b8`) — playlist header, global defaults pill bar (MP4/1080p/Opus/CC), rows: downloading 64% + merging 98% + completed, sticky Start-all + Clear-finished.
    Screenshot: `https://lh3.googleusercontent.com/aida/AEtjO1XSjs0xCogEk4w0q747cj3DkgUE0o23ijMMExJ2IUu3fxQBZojVhuUUhOE8oQcvyYSzetLEFTXbrXt3DIwzkqUKB-WCETvygJi2uXZkP9grt1tPXtnNagyPWS90AqBljfv4n9EkXSwpSnab1QWpD4Z-LUS0Q2cCXasYgnMHmc6KKjy6RcVDdrsb_L2JWOouz8WbYzp_rcY2u2jFDR5CnTlZcf-AfwuGB_QZ5NlTByD45KuaGSQgPwc3veo`
 
+4. Home dark mode (`screens/548224cfbabd4b3ea365fc622b53a5a6`) — 1:1 parity, `#141218` base, `#D0BCFF` primary, dark pill input + tonal Paste, dark cards/nav.
+   Screenshot: `https://lh3.googleusercontent.com/aida/AEtjO1URrKQw_35c0n_l5qYdTiGdBY58CtFoHHAlJoJBWltOuJgda7ewtlqV_MkrxHbNmIhbWKCZ2C-sRxj3_wDEX9PU1FofuYLQXuMqqGrat9OwCXIOivzkdunGdZ_zHOqnnQwYsbVeDCTxzUKNs-m_iBUPyX08h-Kc7AYs2P4O5YHFdzJAXjnmPQOFXZJb6RpZgmN6S72ai1alJPlRfGWge9TFbesGv7k2XmDVqEqBS2YPkyKpMr3OFNK3O6tT`
 ## Frontend mapping (`frontend/src/theme.css`)
 Pill radius 999px, h 48–56px, filled/tonal/outlined/text/segmented variants mirror Stitch tokens. Upgrade path: `@language-lit/material3-expressive`.

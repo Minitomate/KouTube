@@ -4,12 +4,12 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./downloads:/app/downloads
+      - ./downloads:/data
     environment:
-      - DOWNLOADS_DIR=/app/downloads
+      - DOWNLOADS_DIR=/data
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
       - backend

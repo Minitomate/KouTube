@@ -25,6 +25,7 @@ BASE_OPTS: dict = {
 ERROR_TAXONOMY: list[tuple[str, str, str]] = [
     ("private video", "private", "This video is private."),
     ("video unavailable", "deleted", "This video is unavailable or deleted."),
+    ("this video is unavailable", "deleted", "This video is unavailable or deleted."),
     ("this video is no longer available", "deleted", "This video is no longer available."),
     ("age", "age-restricted", "This video is age-restricted and cannot be downloaded anonymously."),
     ("sign in to confirm your age", "age-restricted", "This video is age-restricted."),
@@ -142,6 +143,8 @@ def build_resolve_payload(info: dict) -> dict:
 def extract_info(url: str, playlist: bool = False) -> dict:
     opts = {**BASE_OPTS, "noplaylist": not playlist,
             "extract_flat": "in_playlist" if playlist else False}
+    if playlist:
+        opts["playlistend"] = 50  # cap flat pagination: we only keep 50 entries
     with YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
 

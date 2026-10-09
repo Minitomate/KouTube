@@ -16,7 +16,10 @@ async def resolve(req: ResolveRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"code": "invalid-url", "message": str(exc)})
     try:
-        info = await run_in_threadpool(Y.extract_info, url, False)
+        # Playlist URLs go straight to flat extract (full extract would
+        # download metadata for every video and time out on big playlists).
+        is_playlist_url = "list=" in url
+        info = await run_in_threadpool(Y.extract_info, url, is_playlist_url)
     except ValueError:
         raise
     except Exception as exc:  # noqa: BLE001
