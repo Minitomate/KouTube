@@ -123,6 +123,30 @@ export async function downloadToDisk(
   let honorsRange = false;
   let resumes = 0;
   let firstByte = true;
+  // While the server works before first byte (mux staging), poll its progress
+  // so the UI shows liveness instead of a frozen bar. Stops at first chunk.
+  let serverPoll: ReturnType<typeof setInterval> | undefined;
+  const stopPoll = () => {
+    if (serverPoll !== undefined) { clearInterval(serverPoll); serverPoll = undefined; }
+  };
+  if (opts?.requestId) {
+    const rid = opts.requestId;
+    serverPoll = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/mux-progress?rid=${encodeURIComponent(rid)}`);
+        if (!r.ok) return;
+        const p = (await r.json()) as {
+          phase?: string; loaded?: number | null; total?: number | null;
+        };
+        if (!p || !p.phase || p.phase === 'ready' || p.phase === 'error') return;
+        const bit = p.phase.startsWith('staging-')
+          ? `Staging ${p.phase.slice(8)}` + (p.total ? ` ${Math.min(99, Math.round(((p.loaded ?? 0) / p.total) * 100))}%` : '')
+          : 'Merging…';
+        onStage?.('fetching', `server: ${bit}`);
+      } catch { /* poller is best-effort only */ }
+    }, 1000);
+  }
+  try {
   for (;;) {
     signal?.throwIfAborted();
     const fetchHeaders = { ...reqHeaders, Range: `bytes=${loaded}-` };
@@ -146,6 +170,7 @@ export async function downloadToDisk(
           throw e;
         }
         if (read.done) break;
+        stopPoll();
         await write(read.value);
         loaded += read.value.byteLength;
         onProgress(loaded, total);
@@ -163,6 +188,9 @@ export async function downloadToDisk(
       throw new Error(`Incomplete download (${loaded}/${total} bytes)`);
     }
     break;
+  }
+  } finally {
+    stopPoll();
   }
   if (writable) {
     await writable.close();

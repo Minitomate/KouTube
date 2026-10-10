@@ -19,6 +19,7 @@ export default function TransferCard({ transferId }: { transferId: string }) {
     : item.status === 'cancelled' ? 'cancelled'
     : item.stage === 'preparing' ? 'preparing…'
     : finalizing ? `Finalizing… ${mb(item.loaded)} received`
+    : item.note ? item.note
     : pct === null ? 'merging…'
     : `${pct}%`;
   return (

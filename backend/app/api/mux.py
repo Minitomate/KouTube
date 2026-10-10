@@ -24,6 +24,32 @@ CHUNK = 512 * 1024
 MAX_STAGE_BYTES = 4 * 1024 * 1024 * 1024
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 
+# Ephemeral mux progress keyed by client X-Request-ID. Entries are tiny and
+# purged after 15 minutes; this only bridges the silent stage+mux phase
+# before the response (and first byte) exists.
+_MUX_PROGRESS: dict[str, dict] = {}
+_PROGRESS_TTL = 15 * 60
+
+
+def _progress(rid: str, **kw) -> None:
+    import time
+    now = time.time()
+    for key in [k for k, v in _MUX_PROGRESS.items()
+                if now - v.get("ts", now) > _PROGRESS_TTL]:
+        _MUX_PROGRESS.pop(key, None)
+    if rid and rid != "-":
+        _MUX_PROGRESS[rid] = {"ts": now, **kw}
+
+
+@router.get("/mux-progress")
+async def mux_progress(rid: str):
+    entry = _MUX_PROGRESS.get(rid)
+    if not entry:
+        raise HTTPException(status_code=404, detail={
+            "code": "no-progress", "message": "unknown or expired request"})
+    return {"phase": entry.get("phase"), "loaded": entry.get("loaded"),
+            "total": entry.get("total"), "note": entry.get("note")}
+
 
 async def _stage_url(client: httpx.AsyncClient, url: str, dest: str, rid: str,
                      what: str) -> int:
@@ -48,6 +74,8 @@ async def _stage_url(client: httpx.AsyncClient, url: str, dest: str, rid: str,
                     async for chunk in r.aiter_bytes(CHUNK):
                         fh.write(chunk)
                         loaded += len(chunk)
+                        _progress(rid, phase=f"staging-{what}", loaded=loaded,
+                                  total=total)
                         if loaded > MAX_STAGE_BYTES:
                             raise ValueError("stage too large")
         except (httpx.RequestError, ValueError) as exc:
@@ -134,6 +162,7 @@ async def mux(token: str, request: Request):
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE)
+        _progress(rid, phase="muxing")
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
             log.error("ffmpeg mux failed", rid=rid, returncode=proc.returncode,
@@ -142,6 +171,7 @@ async def mux(token: str, request: Request):
                 "code": "mux-failed", "message": "Server merge failed."})
         size = os.path.getsize(outpath)
         log.info("mux ready", rid=rid, bytes=size)
+        _progress(rid, phase="ready", loaded=size, total=size)
 
         async def gen():
             try:
@@ -170,6 +200,7 @@ async def mux(token: str, request: Request):
     except Exception as exc:  # noqa: BLE001
         _cleanup_tmp(tmp)
         _MUX_SEM.release()
+        _progress(rid, phase="error", note=str(exc)[:200])
         log.error("mux failed", rid=rid, error=str(exc))
         raise HTTPException(status_code=502, detail={
             "code": "mux-failed", "message": f"Server merge failed: {exc}"})
