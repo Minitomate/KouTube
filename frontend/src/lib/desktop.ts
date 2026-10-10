@@ -83,9 +83,11 @@ export async function startDesktopDownload(
     url: choice.url,
     container: choice.container === 'audio' ? 'mp3' : 'mp4',
     quality: choice.quality,
-    audio_track: choice.audioTrack === 'original' ? null : choice.audioTrack,
+    // NOTE: Tauri exposes snake_case Rust params as camelCase — do NOT
+    // "fix" these to snake_case (that breaks invoke with `missing key`).
+    audioTrack: choice.audioTrack === 'original' ? null : choice.audioTrack,
     captions: choice.captions,
-    out_dir: outDir,
+    outDir,
   })) as string;
   const stop = await listen('dl://progress', (e) => {
     const p = e.payload as DesktopEvent;
@@ -96,7 +98,7 @@ export async function startDesktopDownload(
 
 export async function cancelDesktopDownload(jobId: string): Promise<void> {
   const { invoke } = await tauri();
-  await invoke('cancel_download', { job_id: jobId });
+  await invoke('cancel_download', { jobId });
 }
 
 export async function ensureDesktopTools(): Promise<void> {

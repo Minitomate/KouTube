@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 describe('desktop adapter', () => {
-  it('maps web choices to snake_case sidecar args', async () => {
+  it('maps web choices to Tauri camelCase invoke args', async () => {
     invokeMock.mockResolvedValue('job-1');
     listenMock.mockResolvedValue(() => {});
     await startDesktopDownload(
@@ -39,9 +39,10 @@ describe('desktop adapter', () => {
       url: 'https://www.youtube.com/watch?v=x',
       container: 'mp3',
       quality: 'best',
-      audio_track: null,
+      // Tauri exposes snake_case Rust params as camelCase: assert exact keys.
+      audioTrack: null,
       captions: ['en'],
-      out_dir: '/tmp/out',
+      outDir: '/tmp/out',
     });
   });
 
@@ -63,7 +64,7 @@ describe('desktop adapter', () => {
     expect(seen).toEqual(['downloading']);
     expect(invokeMock).toHaveBeenCalledWith(
       'start_download',
-      expect.objectContaining({ audio_track: 'en', container: 'mp4' }),
+      expect.objectContaining({ audioTrack: 'en', container: 'mp4' }),
     );
   });
 
@@ -71,7 +72,7 @@ describe('desktop adapter', () => {
     invokeMock.mockResolvedValue(undefined);
     openMock.mockResolvedValue('/tmp/picked');
     await cancelDesktopDownload('job-9');
-    expect(invokeMock).toHaveBeenCalledWith('cancel_download', { job_id: 'job-9' });
+    expect(invokeMock).toHaveBeenCalledWith('cancel_download', { jobId: 'job-9' });
     await expect(pickFolder()).resolves.toBe('/tmp/picked');
   });
 });
