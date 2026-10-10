@@ -53,6 +53,8 @@ const VERIFIED_CHECK =
 /** Left column: YouTube-recommendation-style video + channel info. */
 export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const [thumbLoaded, setThumbLoaded] = useState(false);
+  const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
   const initial = (media.channel ?? media.title).trim().charAt(0).toUpperCase() || '▶';
   const rel = fmtRelative(media.timestamp) || (media.uploadDate ? fmtDate(media.uploadDate) : '');
@@ -63,7 +65,14 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   return (
     <div className="card">
       <div className="thumb-wrap">
-        {media.thumbnail && <img src={media.thumbnail} alt="" loading="lazy" />}
+        {!thumbLoaded && <div className="sk sk-fill" aria-hidden="true" />}
+        {media.thumbnail && (
+          <img
+            src={media.thumbnail} alt="" loading="lazy" fetchPriority="low"
+            decoding="async" className={thumbLoaded ? 'img-ready' : 'img-waiting'}
+            onLoad={() => setThumbLoaded(true)}
+          />
+        )}
         <span className="pill-badge">{fmtDuration(media.duration)}</span>
       </div>
       <h2>{media.title}</h2>
@@ -78,10 +87,15 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
       {media.channel && (
         <div className="channel-row">
           {avatar ? (
-            <img
-              className="avatar" src={avatar} alt=""
-              loading="lazy" onError={() => setAvatarFailed(true)}
-            />
+            <>
+              {!avatarLoaded && <span className="sk sk-avatar" aria-hidden="true" />}
+              <img
+                className={`avatar${avatarLoaded ? '' : ' img-hidden'}`} src={avatar} alt=""
+                loading="lazy" fetchPriority="low" decoding="async"
+                onLoad={() => setAvatarLoaded(true)}
+                onError={() => setAvatarFailed(true)}
+              />
+            </>
           ) : (
             <span className="avatar avatar-fallback" aria-hidden="true">{initial}</span>
           )}
