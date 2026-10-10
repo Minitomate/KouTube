@@ -48,9 +48,7 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
       - name: Cargo check (needs webkit above)
-        # No committed lockfile (registry filtered on some networks);
-        # CI resolves fresh.
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
 
   e2e:
     runs-on: ubuntu-latest
