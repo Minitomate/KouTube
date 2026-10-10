@@ -26,7 +26,14 @@ export default function UrlBar() {
     setLoading(true);
     try {
       if (isTauri()) {
-        try { await ensureDesktopTools(); } catch { /* setup screen later */ }
+        try {
+          await ensureDesktopTools();
+        } catch (e) {
+          setError(e instanceof Error
+            ? `Setup failed: ${e.message}. Check your connection and retry.`
+            : 'Setup failed. Check your connection and retry.');
+          return;
+        }
         const media = await desktopResolve(value);
         set({ url: value, media, step: 1 });
       } else {
