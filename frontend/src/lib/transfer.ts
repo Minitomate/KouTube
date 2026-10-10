@@ -1,6 +1,33 @@
 // User-end transfer layer: backend only prepares + relays bytes, files land on user disk.
 // Primary save path streams response.body straight to disk (no Blob buffering).
+// Large files go direct-first over parallel ranged parts when possible.
 import { z } from 'zod';
+import pLimit from 'p-limit';
+
+export const PART_BYTES = 8 * 1024 * 1024;
+export const PART_CONCURRENCY = 6;
+export const PARALLEL_MIN_BYTES = 16 * 1024 * 1024;
+/** First-byte budget for the direct-URL probe before proxy fallback. */
+export const DIRECT_PROBE_MS = 8000;
+
+/** Split total bytes into exact (start, end-inclusive) parts. */
+export function planParts(total: number, size: number = PART_BYTES) {
+  const parts: Array<{ start: number; end: number }> = [];
+  let off = 0;
+  while (off < total) {
+    const end = Math.min(off + size - 1, total - 1);
+    parts.push({ start: off, end });
+    off = end + 1;
+  }
+  return parts;
+}
+
+// Hosts where direct fetch already failed this session: skip the probe.
+const directFailedHosts = new Set<string>();
+
+function hostOf(url: string): string {
+  try { return new URL(url).host; } catch { return url; }
+}
 
 export const PrepareSchema = z.object({
   filename: z.string(),
@@ -10,6 +37,9 @@ export const PrepareSchema = z.object({
   streamToken: z.string(),
   muxToken: z.string().nullable(),
   captions: z.array(z.string()),
+  warnings: z.array(z.string()).default([]),
+  videoUrl: z.string().nullable().optional(),
+  audioUrl: z.string().nullable().optional(),
 });
 export type Prepare = z.infer<typeof PrepareSchema>;
 
@@ -59,6 +89,22 @@ export interface FetchOpts {
   onStage?: (stage: 'fetching' | 'finalizing', note?: string) => void;
   /** Server-side staging ticks (pre-first-byte): drive bar + note from them. */
   onServerProgress?: (loaded: number, total: number | null, note: string) => void;
+  /** Direct upstream URL: probed first, proxy fallback on failure. */
+  directUrl?: string;
+  /** Skip the total probe (mux URLs: probing would run the merge twice). */
+  noProbe?: boolean;
+}
+
+function toView(c: Uint8Array): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(c.buffer, c.byteOffset, c.byteLength) as Uint8Array<ArrayBuffer>;
+}
+
+function anySignal(signals: (AbortSignal | undefined)[]): AbortSignal | undefined {
+  const live = signals.filter((s): s is AbortSignal => !!s);
+  if (!live.length) return undefined;
+  if (live.length === 1) return live[0];
+  const AnyC = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  return typeof AnyC === 'function' ? AnyC.call(AbortSignal, live) : live[0];
 }
 
 class StallError extends Error {}
@@ -115,22 +161,34 @@ export async function downloadToDisk(
       createWritable: () => Promise<FileSystemWritableFileStream>;
     }>;
   };
-  const automation = (navigator as unknown as { webdriver?: boolean }).webdriver === true;
+  const automation = (navigator as unknown as { webdriver?: boolean }).webdriver === true
+    && !window.location.search.includes('forcefs=1');
+  type Handle = { createWritable: () => Promise<FileSystemWritableFileStream> };
+  let handle: Handle | null = null;
   let writable: FileSystemWritableFileStream | null = null;
   if (anyWin.showSaveFilePicker && !automation) {
     try {
-      const handle = await anyWin.showSaveFilePicker({ suggestedName: filename });
+      handle = await anyWin.showSaveFilePicker({ suggestedName: filename });
       writable = await handle.createWritable();
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') throw e;
-      writable = null; // headless/denied → anchor fallback below
+      handle = null; // headless/denied → anchor fallback below
     }
   }
   const chunks: Uint8Array[] = [];
   const write = async (c: Uint8Array) => {
     if (writable) {
-      await writable.write(new Uint8Array(c.buffer, c.byteOffset, c.byteLength) as Uint8Array<ArrayBuffer>);
+      await writable.write(toView(c));
     } else chunks.push(c);
+  };
+  const positionedOk = async (): Promise<boolean> => {
+    if (!writable) return false;
+    try {
+      await writable.write({ type: 'write', position: 0, data: new Uint8Array(0) });
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   // Always request a byte range: defeats upstream throttling of full-file
@@ -172,49 +230,200 @@ export async function downloadToDisk(
     void tick(); // leading edge: don't wait a full interval for the first note
     serverPoll = setInterval(tick, 1000);
   }
-  try {
-  for (;;) {
-    signal?.throwIfAborted();
-    const fetchHeaders = { ...reqHeaders, Range: `bytes=${loaded}-` };
-    const res = await fetch(url, { signal, headers: fetchHeaders });
-    if (res.status !== 200 && res.status !== 206) {
-      throw new Error(`Download failed (HTTP ${res.status})`);
-    }
-    if (!res.body) throw new Error('Download failed (empty body)');
-    honorsRange = res.status === 206;
-    if (honorsRange) total = totalFrom206(res) ?? total;
-    else if (loaded === 0) total = Number(res.headers.get('content-length')) || total;
-    else throw new Error('Server does not support resume; restart the download');
-    const reader = res.body.getReader();
-    try {
-      for (;;) {
-        let read: ReadableStreamReadResult<Uint8Array>;
+  // Direct-first: probe the upstream URL for first byte; CORS/network
+  // failure (or a session-cached failure) falls back to the proxy URL.
+  // Returns {base, direct} where direct tells whether parts may use it.
+  const chooseBase = async (): Promise<{ base: string; direct: boolean }> => {
+    const direct = opts?.directUrl;
+    if (direct && !directFailedHosts.has(hostOf(direct))) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), DIRECT_PROBE_MS);
+      try {
+        const res = await fetch(direct, {
+          signal: anySignal([signal, ctl.signal]),
+          headers: { Range: 'bytes=0-' },
+          cache: 'no-store',
+        });
+        if (res.status !== 200 && res.status !== 206) throw new Error(`HTTP ${res.status}`);
+        if (!res.body) throw new Error('empty body');
+        const reader = res.body.getReader();
         try {
-          read = await withTimeout(reader.read(), idleMs, signal);
-        } catch (e) {
-          if (e instanceof StallError) break; // treat stall as stream end → resume/exhaust below
-          throw e;
+          const first = await withTimeout(reader.read(), DIRECT_PROBE_MS, ctl.signal);
+          if (first.done) throw new Error('empty body');
+        } finally {
+          try { await reader.cancel(); } catch { /* drained */ }
+          reader.releaseLock();
         }
-        if (read.done) break;
-        stopPoll();
-        await write(read.value);
-        loaded += read.value.byteLength;
-        onProgress(loaded, total);
-        if (firstByte) { firstByte = false; onStage?.('fetching'); }
-        if (total !== null && loaded >= total) {
-          onStage?.('finalizing', `${(loaded / 1048576).toFixed(1)} MB received`);
-        }
+        try { await res.body.cancel(); } catch { /* drained */ }
+        return { base: direct, direct: true };
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError' && signal?.aborted) throw e;
+        directFailedHosts.add(hostOf(direct)); // remember for this session
+      } finally {
+        clearTimeout(timer);
       }
-    } finally {
-      try { await reader.cancel(); } catch { /* already closed */ }
-      reader.releaseLock();
     }
-    if (total !== null && loaded < total) {
-      if (honorsRange && resumes < maxResumes) { resumes += 1; continue; }
-      throw new Error(`Incomplete download (${loaded}/${total} bytes)`);
+    return { base: url, direct: false };
+  };
+
+  const probeTotal = async (base: string): Promise<{ total: number | null; ranges: boolean }> => {
+    try {
+      const res = await fetch(base, {
+        signal, headers: { ...reqHeaders, Range: 'bytes=0-0' }, cache: 'no-store',
+      });
+      if (res.status === 206) {
+        const total = totalFrom206(res);
+        try { await res.body?.cancel(); } catch { /* drained */ }
+        return { total, ranges: total !== null };
+      }
+      if (res.status === 200) {
+        const total = Number(res.headers.get('content-length')) || null;
+        try { await res.body?.cancel(); } catch { /* drained */ }
+        return { total, ranges: false };
+      }
+    } catch { /* probe failure → sequential path decides */ }
+    return { total: sizeEstimate, ranges: false };
+  };
+
+  const fetchPart = async (
+    base: string, start: number, end: number, idx: number,
+    writer: FileSystemWritableFileStream,
+    onBytes: (n: number) => void,
+  ): Promise<void> => {
+    let off = start;
+    for (let attempt = 0; attempt < 5 && off <= end; attempt++) {
+      signal?.throwIfAborted();
+      const res = await fetch(base, {
+        signal, cache: 'no-store',
+        headers: { ...reqHeaders, Range: `bytes=${off}-${end}` },
+      });
+      if (res.status === 416) {
+        throw new Error(`Part ${idx} unsatisfiable (${off}-${end})`);
+      }
+      if (res.status !== 206 || !res.body) {
+        throw new Error(`Part ${idx} HTTP ${res.status}`);
+      }
+      const m = /bytes (\d+)-(\d+)\/(\d+)/.exec(res.headers.get('content-range') || '');
+      if (!m || Number(m[1]) !== off || Number(m[2]) !== end) {
+        throw new Error(`Part ${idx} range mismatch`);
+      }
+      const reader = res.body.getReader();
+      try {
+        for (;;) {
+          let read: ReadableStreamReadResult<Uint8Array>;
+          try {
+            read = await withTimeout(reader.read(), idleMs, signal);
+          } catch (e) {
+            if (e instanceof StallError) break; // resume below
+            throw e;
+          }
+          if (read.done) break;
+          await writer.write({ type: 'write', position: off, data: toView(read.value) });
+          off += read.value.byteLength;
+          onBytes(read.value.byteLength);
+        }
+      } finally {
+        try { await reader.cancel(); } catch { /* already closed */ }
+        reader.releaseLock();
+      }
     }
-    break;
-  }
+    if (off !== end + 1) {
+      throw new Error(`Incomplete part ${idx} (${off - start}/${end - start + 1})`);
+    }
+  };
+
+  const fetchParallel = async (base: string, total: number): Promise<void> => {
+    if (!writable) throw new Error('parallel needs a file writer');
+    const writer = writable;
+    const parts = planParts(total);
+    const per = new Array<number>(parts.length).fill(0);
+    let first = true;
+    const report = () => {
+      const sum = per.reduce((a, b) => a + b, 0);
+      onProgress(sum, total);
+      if (first) { first = false; onStage?.('fetching'); }
+      if (sum >= total) onStage?.('finalizing', `${(sum / 1048576).toFixed(1)} MB received`);
+    };
+    const limit = pLimit(PART_CONCURRENCY);
+    await Promise.all(parts.map((pt, i) => limit(async () => {
+      const before = per[i];
+      await fetchPart(base, pt.start, pt.end, i, writer, (n) => {
+        per[i] += n;
+        report();
+      }).catch((e) => {
+        per[i] = before; // don't count partial retries twice on failure paths
+        throw e;
+      });
+    })));
+    const sum = per.reduce((a, b) => a + b, 0);
+    if (sum !== total) throw new Error(`Incomplete download (${sum}/${total} bytes)`);
+    onProgress(sum, total);
+  };
+
+  const fetchSequential = async (base: string): Promise<void> => {
+    for (;;) {
+      signal?.throwIfAborted();
+      const fetchHeaders = { ...reqHeaders, Range: `bytes=${loaded}-` };
+      const res = await fetch(base, { signal, headers: fetchHeaders });
+      if (res.status !== 200 && res.status !== 206) {
+        throw new Error(`Download failed (HTTP ${res.status})`);
+      }
+      if (!res.body) throw new Error('Download failed (empty body)');
+      honorsRange = res.status === 206;
+      if (honorsRange) total = totalFrom206(res) ?? total;
+      else if (loaded === 0) total = Number(res.headers.get('content-length')) || total;
+      else throw new Error('Server does not support resume; restart the download');
+      const reader = res.body.getReader();
+      try {
+        for (;;) {
+          let read: ReadableStreamReadResult<Uint8Array>;
+          try {
+            read = await withTimeout(reader.read(), idleMs, signal);
+          } catch (e) {
+            if (e instanceof StallError) break; // treat stall as stream end → resume/exhaust below
+            throw e;
+          }
+          if (read.done) break;
+          stopPoll();
+          await write(read.value);
+          loaded += read.value.byteLength;
+          onProgress(loaded, total);
+          if (firstByte) { firstByte = false; onStage?.('fetching'); }
+          if (total !== null && loaded >= total) {
+            onStage?.('finalizing', `${(loaded / 1048576).toFixed(1)} MB received`);
+          }
+        }
+      } finally {
+        try { await reader.cancel(); } catch { /* already closed */ }
+        reader.releaseLock();
+      }
+      if (total !== null && loaded < total) {
+        if (honorsRange && resumes < maxResumes) { resumes += 1; continue; }
+        throw new Error(`Incomplete download (${loaded}/${total} bytes)`);
+      }
+      break;
+    }
+  };
+
+  // Main: direct-first probe → parallel parts when possible → sequential.
+  // Mux URLs skip probing (a probe would run the server merge twice).
+  try {
+    const { base } = await chooseBase();
+    let known = sizeEstimate;
+    let ranges = false;
+    if (!opts?.noProbe) {
+      const probed = await probeTotal(base);
+      known = probed.total ?? sizeEstimate;
+      ranges = probed.ranges;
+    }
+    total = known;
+    if (ranges && known !== null && known >= PARALLEL_MIN_BYTES
+        && writable && await positionedOk()) {
+      await fetchParallel(base, known);
+      loaded = known;
+    } else {
+      await fetchSequential(base);
+    }
   } finally {
     stopPoll();
   }

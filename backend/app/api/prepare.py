@@ -46,14 +46,18 @@ async def prepare(req: PrepareRequest, request: Request):
     filename = f"{sanitize_filename(title)} [{vid}].{req.container}"
     payload = {"u": url, "v": streams["video_url"], "a": streams["audio_url"],
                "vd": streams["video_direct"], "ad": streams["audio_direct"],
-               "c": req.container, "s": list(embed), "f": req.subFormat,
-               "n": filename}
+               "c": req.container, "q": req.quality, "al": req.audioTrackLang,
+               "s": list(embed), "f": req.subFormat, "n": filename}
     stream_token = T.mint("stream", payload)
     mux_token = T.mint("mux", payload) if (streams["merge_required"] or embed) else None
+    warnings = []
+    if streams["merge_required"] and not (streams["video_direct"] and streams["audio_direct"]):
+        warnings.append("Source is a live stream manifest; the file may contain gaps.")
     return PrepareResponse(
         filename=filename, container=req.container,
         mergeRequired=bool(streams["merge_required"] or embed),
         sizeEstimate=streams["size_estimate"],
         streamToken=stream_token, muxToken=mux_token,
-        captions=sorted(manual_langs),
+        captions=sorted(manual_langs), warnings=warnings,
+        videoUrl=streams["video_url"], audioUrl=streams["audio_url"],
     )

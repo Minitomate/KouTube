@@ -17,6 +17,7 @@ export default function Home() {
   const { url, media, format, quality, audioTrack, captions, set, upsertTransfer } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [warn, setWarn] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   function fail(message: string) {
@@ -37,9 +38,12 @@ export default function Home() {
       const ctl = new AbortController();
       abortRef.current = ctl;
       upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching', rid });
+      if (p.warnings.length) setWarn(p.warnings.join(' '));
       await downloadToDisk(transferUrl(p), p.filename, p.sizeEstimate,
         (loaded, total) => upsertTransfer({ id, title: p.filename, loaded, total, status: 'working', stage: 'fetching', rid }),
         ctl.signal, { requestId: rid, onStage: stage,
+          directUrl: p.mergeRequired ? undefined : (p.videoUrl ?? undefined),
+          noProbe: p.mergeRequired,
           onServerProgress: (sLoaded, sTotal, note) => {
             const cur = useStore.getState().queue.find((q) => q.id === id);
             // Only drive the bar pre-first-byte; real bytes take over after.
@@ -62,6 +66,7 @@ export default function Home() {
   async function download() {
     if (!url) { setError('Paste a YouTube URL first.'); return; }
     setError('');
+    setWarn('');
     setBusy(true);
     try {
       if (media?.isPlaylist && media.entries?.length) {
@@ -139,6 +144,7 @@ export default function Home() {
       <CaptionsPicker />
       <QueueView />
       <div className="field-error" role="alert">{error}</div>
+      {warn && <div className="meta" role="note">{warn}</div>}
       <div className="sticky-cta">
         <div>
           <button className="pill-btn filled" onClick={download} disabled={busy || !url} aria-label={media?.isPlaylist ? 'Download ZIP' : 'Download'}>

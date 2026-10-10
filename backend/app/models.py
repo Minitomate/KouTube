@@ -69,6 +69,9 @@ class PrepareResponse(BaseModel):
     streamToken: str
     muxToken: str | None = None
     captions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    videoUrl: str | None = None
+    audioUrl: str | None = None
 
 
 class ErrorResponse(BaseModel):

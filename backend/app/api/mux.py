@@ -99,23 +99,41 @@ class _Rate:
         return rate, None  # ETA needs total; caller fills it in
 
 
+async def _refresh_input(data: dict, which: str) -> str:
+    """Re-resolve fresh upstream URLs (old ones expire mid-stage)."""
+    info = await asyncio.to_thread(Y.extract_info, data["u"], False)
+    streams = Y.pick_streams(info, data.get("c", "mp4"),
+                             data.get("q", "best"), data.get("al"))
+    key = "video_url" if which == "video" else "audio_url"
+    url = streams[key]
+    data["v" if which == "video" else "a"] = url
+    log.info("mux urls refreshed", what=which)
+    return url
+
+
 async def _fetch_segment(client: httpx.AsyncClient, url: str, fd: int,
                          start: int, end: int, rid: str, what: str,
-                         seg_idx: int) -> float:
+                         seg_idx: int, refresh=None) -> float:
     """Fetch one byte segment, resuming within the segment on stalls.
 
-    Returns seconds taken. Raises ValueError (fail-fast input) or
-    httpx.HTTPStatusError on 403/429 so the caller can back off.
+    Returns seconds taken. `refresh`, when given, is awaited once on 403/429
+    to swap in fresh re-resolved URLs; otherwise HTTPStatusError propagates
+    so the caller can back off. Other failures raise ValueError.
     """
     import time
     t0 = time.monotonic()
     off = start
+    refreshed = False
     last: Exception | None = None
     for attempt in range(5):
         try:
             headers = {**UA, "Range": f"bytes={off}-{end}"}
             async with client.stream("GET", url, headers=headers) as r:
                 if r.status_code in (403, 429):
+                    if refresh is not None and not refreshed:
+                        refreshed = True
+                        url = await refresh()
+                        continue
                     raise httpx.HTTPStatusError(
                         f"upstream {r.status_code}", request=r.request,
                         response=r.response)
@@ -137,14 +155,16 @@ async def _fetch_segment(client: httpx.AsyncClient, url: str, fd: int,
     raise ValueError(f"segment {seg_idx} failed: {last!r}")
 
 
-async def _stage_url(client: httpx.AsyncClient, url: str, dest: str, rid: str,
+async def _stage_url(client: httpx.AsyncClient, data: dict, dest: str, rid: str,
                      what: str) -> int:
     """Adaptive parallel segmented fetch (defeats single-connection throttle).
 
-    Probes total once, pulls 8MB segments with 4 workers, scales to 8 while
+    Probes total once, pulls 8MB segments with 2 workers, scales to 4 while
     segments stay healthy, backs off (no scale-up + longer retry) on 403/429.
+    Expired segment URLs are re-resolved once via the token payload.
     """
     import time
+    url = data["v" if what == "video" else "a"]
     # Probe total with headers only.
     total: int | None = None
     async with client.stream("GET", url, headers={**UA, "Range": "bytes=0-0"}) as r:
@@ -180,7 +200,11 @@ async def _stage_url(client: httpx.AsyncClient, url: str, dest: str, rid: str,
                 except asyncio.QueueEmpty:
                     return
                 try:
-                    dt = await _fetch_segment(client, url, fd, s, e, rid, what, i)
+                    async def refresh() -> str:
+                        return await _refresh_input(data, what)
+
+                    dt = await _fetch_segment(client, url, fd, s, e, rid, what,
+                                              i, refresh)
                 except httpx.HTTPStatusError as exc:
                     state["degraded"] = True
                     log.warning("mux staging throttled", rid=rid, what=what,
@@ -316,18 +340,18 @@ async def mux(token: str, request: Request):
         outpath = os.path.join(tmp, "out.mp4" if container == "mp4" else "out.mkv")
         # Direct-HTTP inputs are staged with ranged requests (full speed);
         # manifest inputs (HLS/DASH) are left for ffmpeg to fetch itself.
-        vinput, ainput = vurl, aurl
         limits = httpx.Limits(max_connections=MAX_WORKERS + 2,
                               max_keepalive_connections=MAX_WORKERS + 2)
         async with httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, read=60.0),
                 limits=limits) as client:
             if data.get("vd", True):
-                await _stage_url(client, vurl, vpath, rid, "video")
-                vinput = vpath
+                await _stage_url(client, data, vpath, rid, "video")
             if data.get("ad", True):
-                await _stage_url(client, aurl, apath, rid, "audio")
-                ainput = apath
+                await _stage_url(client, data, apath, rid, "audio")
+        # Re-read URLs: staging may have refreshed expired ones.
+        vinput = vpath if data.get("vd", True) else data["v"]
+        ainput = apath if data.get("ad", True) else data["a"]
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
         for media_input in (vinput, ainput):
             if media_input in (vpath, apath):

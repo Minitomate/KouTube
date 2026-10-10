@@ -100,9 +100,11 @@ test.describe('stall recovery (user-end)', () => {
     await app.inspectUrl(URL);
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
-    expect(ranges.length).toBeGreaterThan(1);
-    expect(ranges[0]).toBe('bytes=0-');
-    expect(ranges[1]).toBe('bytes=5-');
+    // [total probe bytes=0-0, full bytes=0-, resume bytes=5-]
+    expect(ranges.length).toBeGreaterThan(2);
+    expect(ranges[0]).toBe('bytes=0-0');
+    expect(ranges[1]).toBe('bytes=0-');
+    expect(ranges[2]).toBe('bytes=5-');
   });
 });
 
@@ -123,9 +125,12 @@ test.describe('stall recovery (user-end)', () => {
     );
     const muxHit: string[] = [];
     await page.route('**/api/mux*', (r) => {
-      // The pre-first-byte progress poller hits a mux* URL too; only count
-      // real downloads (token=), not progress polls (rid=).
-      if (r.request().url().includes('token=')) muxHit.push(r.request().url());
+      // The pre-flight total probe (Range bytes=0-0) also hits this route;
+      // only the real transfer (bytes=0-) counts, not progress polls (rid=).
+      if (r.request().url().includes('token=')
+        && (r.request().headers()['range'] ?? '') !== 'bytes=0-0') {
+        muxHit.push(r.request().url());
+      }
       return r.fulfill({ status: 200, body: 'muxed-bytes!', contentType: 'video/mp4' });
     });
     const app = new KouTubePage(page);
