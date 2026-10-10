@@ -194,7 +194,7 @@ export default function Home() {
       outDir,
       (e) => {
         if (e.status === 'done') {
-          finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end' }, 'event: done');
+          finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end', note: e.note ?? undefined }, 'event: done');
         } else if (e.status === 'error') {
           finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' }, `event: error ${e.error ?? ''}`);
         } else if (e.status === 'cancelled') {

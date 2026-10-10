@@ -44,6 +44,14 @@ export interface DesktopEvent {
   title?: string | null;
   filepath?: string | null;
   error?: string | null;
+  note?: string | null;
+}
+
+/** Inspect failure text: desktop has no backend, so say so plainly. */
+export function inspectFailedMessage(desktop: boolean): string {
+  return desktop
+    ? 'Could not inspect this video. Check the link and retry.'
+    : 'Could not inspect URL. Is the backend running?';
 }
 
 export async function pickFolder(): Promise<string | null> {

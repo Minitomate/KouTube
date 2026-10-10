@@ -75,6 +75,12 @@ describe('desktop adapter', () => {
     expect(invokeMock).toHaveBeenCalledWith('cancel_download', { jobId: 'job-9' });
     await expect(pickFolder()).resolves.toBe('/tmp/picked');
   });
+
+  it('names inspect failures per platform', async () => {
+    const { inspectFailedMessage } = await import('./desktop');
+    expect(inspectFailedMessage(true)).toBe('Could not inspect this video. Check the link and retry.');
+    expect(inspectFailedMessage(false)).toContain('backend');
+  });
 });
 
 describe('resolveOutDir', () => {

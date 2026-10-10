@@ -39,6 +39,7 @@ struct JobView {
     title: Option<String>,
     filepath: Option<String>,
     error: Option<String>,
+    note: Option<String>,
 }
 
 struct JobHandle {
@@ -93,7 +94,7 @@ fn emit_progress(app: &AppHandle, job_id: &str, view: &JobView) {
         serde_json::json!({
             "job_id": job_id, "status": view.status, "percent": view.percent,
             "speed": view.speed, "eta": view.eta, "title": view.title,
-            "filepath": view.filepath, "error": view.error,
+            "filepath": view.filepath, "error": view.error, "note": view.note,
         }),
     );
 }
@@ -154,7 +155,10 @@ pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
     cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::null());
     let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
         .await
-        .map_err(|_| anyhow!("resolve timed out after 60s"))??;
+        .map_err(|_| {
+            blog(format!("resolve failed (timeout) url={}", short_url(url)));
+            anyhow!("resolve timed out after 60s")
+        })??;
     if !out.status.success() {
         blog(format!("resolve failed url={}", short_url(url)));
         return Err(anyhow!("resolve failed"));
@@ -418,6 +422,11 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
         }
         match run_once(&app, &job_id, &spec, attempt).await {
             Ok(done_path) => {
+                let note = jobs()
+                    .lock()
+                    .await
+                    .get(&job_id)
+                    .and_then(|h| h.view.note.clone());
                 finish(
                     &app,
                     &job_id,
@@ -426,6 +435,7 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                         percent: 100.0,
                         title: spec.title.clone(),
                         filepath: done_path,
+                        note,
                         ..Default::default()
                     },
                 )
@@ -560,15 +570,44 @@ async fn run_once(
 
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;
-    // ffmpeg progress arrives on STDERR: drain it (never block the pipe) and
-    // timestamp it — the merge watchdog below depends on this heartbeat.
+    // ffmpeg progress arrives on STDERR: drain it (never block the pipe),
+    // timestamp it for the merge watchdog, and keep a tail so failures
+    // quote yt-dlp's own diagnostics instead of dying silent.
+    let err_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let tail_text = || {
+        let err_tail = err_tail.clone();
+        async move {
+            let guard = err_tail.lock().await;
+            let mut s: String = guard
+                .iter()
+                .rev()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" | ");
+            if s.len() > 500 {
+                s.truncate(500);
+            }
+            s
+        }
+    };
+    // ffmpeg progress arrives on STDERR: drain it (never block the pipe),
+    // timestamp it for the merge watchdog, and keep a tail so failures quote
+    // yt-dlp's own diagnostics instead of dying silent.
     let last_io = Arc::new(Mutex::new(Instant::now()));
     {
         let last_io = last_io.clone();
+        let err_tail = err_tail.clone();
         tauri::async_runtime::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
-            while lines.next_line().await.unwrap_or(None).is_some() {
+            while let Some(l) = lines.next_line().await.unwrap_or(None) {
                 *last_io.lock().await = Instant::now();
+                let mut guard = err_tail.lock().await;
+                guard.push(l);
+                if guard.len() > 20 {
+                    let excess = guard.len() - 20;
+                    guard.drain(..excess);
+                }
             }
         });
     }
@@ -648,10 +687,24 @@ async fn run_once(
                     )
                     .await;
                 } else if l.starts_with("ERROR") {
-                    blog(format!("yt-dlp error job={job_id} line={l}"));
+                    let tail = tail_text().await;
+                    blog(format!("yt-dlp error job={job_id} line={l} tail={tail}"));
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
-                    return Err(anyhow!("{l}"));
+                    return Err(anyhow!("{l} :: {tail}"));
+                } else if is_skip_line(&l) {
+                    set_status(
+                        app,
+                        job_id,
+                        JobView {
+                            status: "downloading".into(),
+                            percent: 100.0,
+                            title: spec.title.clone(),
+                            note: Some("already on disk".to_string()),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 } else if !l.starts_with('[') && !l.trim().is_empty() {
                     // `--print after_move:filepath` emits the final path bare.
                     // Only absolute paths qualify: warnings must never win.
@@ -667,13 +720,22 @@ async fn run_once(
     }
     let status = child.wait().await?;
     if !status.success() {
-        blog(format!("yt-dlp exit job={job_id} status={status}"));
-        return Err(anyhow!("yt-dlp exited with {status}"));
+        let tail = tail_text().await;
+        blog(format!(
+            "yt-dlp exit job={job_id} status={status} tail={tail}"
+        ));
+        return Err(anyhow!("yt-dlp exited with {status} :: {tail}"));
     }
     if let Some(ref p) = final_path {
         blog(format!("download done job={job_id} path={p}"));
     }
     Ok(final_path)
+}
+
+/// True for yt-dlp's idempotent skip line: `[download] <file> has already
+/// been downloaded`. Zero network happened: surface as "already on disk".
+fn is_skip_line(line: &str) -> bool {
+    line.contains("has already been downloaded")
 }
 
 /// Parse `[download]  12.3% of ~  4.56MiB at  1.23MiB/s ETA 00:03`.
@@ -693,6 +755,44 @@ fn parse_progress(line: &str) -> Option<(f64, Option<String>, Option<String>)> {
         }
     }
     Some((pct, speed, eta))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_line_parses() {
+        let (pct, speed, eta) =
+            parse_progress("[download]  12.3% of ~  4.56MiB at  1.23MiB/s ETA 00:03").unwrap();
+        assert!((pct - 12.3).abs() < f64::EPSILON);
+        assert_eq!(speed.as_deref(), Some("1.23MiB/s"));
+        assert_eq!(eta.as_deref(), Some("00:03"));
+    }
+
+    #[test]
+    fn progress_line_without_speed_parses() {
+        let (pct, speed, eta) = parse_progress("[download]   0.0%").unwrap();
+        assert_eq!(pct, 0.0);
+        assert!(speed.is_none());
+        assert!(eta.is_none());
+    }
+
+    #[test]
+    fn non_progress_lines_rejected() {
+        assert!(parse_progress("[Merger] Merging formats").is_none());
+        assert!(parse_progress("ERROR: something broke").is_none());
+        assert!(parse_progress("").is_none());
+    }
+
+    #[test]
+    fn skip_line_detected() {
+        assert!(is_skip_line(
+            "[download] Title [abc123].mp4 has already been downloaded"
+        ));
+        assert!(!is_skip_line("[download]  12.3% of ~ 4.56MiB"));
+        assert!(!is_skip_line("ERROR: video unavailable"));
+    }
 }
 
 async fn kill_tree(job_id: &str) {

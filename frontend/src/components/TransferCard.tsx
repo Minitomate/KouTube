@@ -14,7 +14,7 @@ export default function TransferCard({ transferId }: { transferId: string }) {
   const finalizing = item.status === 'working' &&
     (item.stage === 'finalizing' || (item.total !== null && item.loaded >= item.total));
   const statusText =
-    item.status === 'done' ? 'saved ✓'
+    item.status === 'done' ? (item.note ? `saved ✓ · ${item.note}` : 'saved ✓')
     : item.status === 'error' ? `failed: ${item.error ?? ''}`
     : item.status === 'cancelled' ? 'cancelled'
     : item.stage === 'preparing' ? 'preparing…'
