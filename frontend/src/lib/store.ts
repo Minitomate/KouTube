@@ -8,6 +8,8 @@ export interface Transfer {
   id: string; title: string; loaded: number; total: number | null;
   status: TransferStatus; error?: string;
   stage: TransferStage; note?: string; rid?: string;
+  /** Epoch ms when stage last became finalizing (merge elapsed clock). */
+  mergeAt?: number;
   /** Newest-last stage log (desktop flow); cap 30. Absent on older cards. */
   log?: string[];
 }

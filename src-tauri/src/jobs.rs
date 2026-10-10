@@ -695,6 +695,7 @@ async fn run_once(
     let mut last_out = Instant::now();
     let mut final_path: Option<String> = None;
     let mut merging = false;
+    let mut logged_unparsed = false;
     loop {
         let line = tokio::time::timeout(Duration::from_secs(1), reader.next_line()).await;
         match line {
@@ -735,7 +736,20 @@ async fn run_once(
             Ok(Ok(None)) => break, // EOF
             Ok(Ok(Some(l))) => {
                 last_out = Instant::now();
-                if let Some(ev) = parse_progress(&l) {
+                let ev = parse_progress(&l).or_else(|| {
+                    // Fallback: any percent in a [download] line counts, even
+                    // when speed/ETA decorations differ by yt-dlp version.
+                    if l.starts_with("[download]") {
+                        if !logged_unparsed {
+                            logged_unparsed = true;
+                            blog(format!("unparsed progress job={job_id} line={l}"));
+                        }
+                        fallback_percent(&l).map(|p| (p, None, None))
+                    } else {
+                        None
+                    }
+                });
+                if let Some(ev) = ev {
                     set_status(
                         app,
                         job_id,
@@ -817,6 +831,30 @@ fn is_skip_line(line: &str) -> bool {
     line.contains("has already been downloaded")
 }
 
+/// Fallback percent: first `N.N%` anywhere in the line. Used when the strict
+/// parser misses a yt-dlp variant; speed/ETA stay unknown (client computes).
+fn fallback_percent(line: &str) -> Option<f64> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let mut j = i;
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'%' {
+                if let Ok(p) = line[i..j].parse::<f64>() {
+                    return Some(p);
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
 /// Parse `[download]  12.3% of ~  4.56MiB at  1.23MiB/s ETA 00:03`.
 fn parse_progress(line: &str) -> Option<(f64, Option<String>, Option<String>)> {
     let rest = line.strip_prefix("[download]")?.trim();
@@ -862,6 +900,14 @@ mod tests {
         assert!(parse_progress("[Merger] Merging formats").is_none());
         assert!(parse_progress("ERROR: something broke").is_none());
         assert!(parse_progress("").is_none());
+    }
+
+    #[test]
+    fn fallback_catches_variant_formats() {
+        assert_eq!(fallback_percent("[download]  45.0% of 10MiB"), Some(45.0));
+        assert_eq!(fallback_percent("[download] 100%"), Some(100.0));
+        assert_eq!(fallback_percent("[Merger] Merging"), None);
+        assert_eq!(fallback_percent("no numbers here"), None);
     }
 
     #[test]

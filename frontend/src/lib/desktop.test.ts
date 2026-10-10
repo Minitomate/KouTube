@@ -95,6 +95,19 @@ describe('desktop adapter', () => {
     expect(noted.note).toContain('2.0MB/s');
     expect(noted.note).toContain('ETA 00:01');
   });
+
+  it('computes client %/s over a rolling window', async () => {
+    const { pctRate } = await import('./desktop');
+    const t0 = 1000000;
+    const samples = [
+      { t: t0, p: 10 },
+      { t: t0 + 1000, p: 12 },
+      { t: t0 + 2000, p: 14 },
+    ];
+    expect(pctRate(samples, t0 + 2000)).toBeCloseTo(2, 5);
+    expect(pctRate([{ t: t0, p: 10 }], t0 + 1000)).toBeNull();
+    expect(pctRate(samples, t0 + 10000)).toBeNull(); // stale window
+  });
 });
 
 describe('resolveOutDir', () => {

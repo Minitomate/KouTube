@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
-import { isTauri, desktopResolve, ensureDesktopTools, inspectFailedMessage } from '../lib/desktop';
+import { isTauri, desktopResolve, ensureDesktopTools, inspectFailedMessage, readClipboardText } from '../lib/desktop';
 
 const ytSchema = z.string().url().refine(
   (u) => /(youtube\.com|youtu\.be)/.test(u),
@@ -51,11 +51,16 @@ export default function UrlBar() {
 
   async function paste() {
     try {
-      const text = await navigator.clipboard.readText();
+      const text = isTauri()
+        ? await readClipboardText()
+        : await navigator.clipboard.readText();
       setDraft(text);
       if (text) void inspect(text);
     } catch {
-      setError('Clipboard blocked — paste manually.');
+      // Fall through to manual paste: focus + select the input so it's one keystroke.
+      document.getElementById('url')?.focus();
+      (document.getElementById('url') as HTMLInputElement | null)?.select?.();
+      setError(isTauri() ? 'Paste into the field manually.' : 'Clipboard blocked — paste manually (Ctrl+V).');
     }
   }
 

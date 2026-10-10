@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useStore, blankTransfer, tlog, type Transfer } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA } from '../lib/transfer';
-import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent } from '../lib/desktop';
+import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent, pctRate } from '../lib/desktop';
 import UrlBar from '../components/UrlBar';
 import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
@@ -20,6 +20,7 @@ export default function Home() {
   const [warn, setWarn] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const desktopJobs = useRef(new Map<string, string>());
+  const rateSamples = useRef(new Map<string, Array<{ t: number; p: number }>>());
   const batchCancelled = useRef(false);
   const [canCancel, setCanCancel] = useState(false);
 
@@ -208,9 +209,15 @@ export default function Home() {
           finish({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' }, 'event: cancelled');
         } else {
           const cur = useStore.getState().queue.find((q) => q.id === transferId);
+          const samples = rateSamples.current.get(transferId) ?? [];
+          samples.push({ t: Date.now(), p: m.percent });
+          rateSamples.current.set(transferId, samples.slice(-20));
+          const rate = pctRate(samples, Date.now());
           const base = {
             id: transferId, title: e.title ?? title, loaded: m.percent, total: 100,
-            status: 'working' as const, stage: m.stage, note: m.note,
+            status: 'working' as const, stage: m.stage,
+            note: m.note ?? (rate !== null ? `~${rate.toFixed(1)}%/s` : undefined),
+            mergeAt: m.stage === 'finalizing' ? (cur?.mergeAt ?? Date.now()) : cur?.mergeAt,
           };
           upsertTransfer(cur ? { ...cur, ...base } : { ...blankTransfer(transferId, title), ...base });
         }

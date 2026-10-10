@@ -56,6 +56,20 @@ export interface MappedEvent {
   note?: string;
 }
 
+/** Client-side %/s rate over a rolling window (fallback when server omits speed). */
+export function pctRate(
+  samples: Array<{ t: number; p: number }>,
+  now: number,
+  windowMs = 5000,
+): number | null {
+  const fresh = samples.filter((s) => now - s.t <= windowMs);
+  if (fresh.length < 2) return null;
+  const dt = (now - fresh[0].t) / 1000;
+  const dp = fresh[fresh.length - 1].p - fresh[0].p;
+  if (dt <= 0 || dp <= 0) return null;
+  return dp / dt;
+}
+
 /** Pure mapping: sidecar event -> card state. Unit-tested, no side effects. */
 export function mapDesktopEvent(e: DesktopEvent): MappedEvent {
   if (e.status === 'done') return { kind: 'done', percent: 100, stage: 'finalizing' };
@@ -68,6 +82,12 @@ export function mapDesktopEvent(e: DesktopEvent): MappedEvent {
     note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? '', e.note ?? '']
       .filter(Boolean).join(' · ') || undefined,
   };
+}
+
+/** Clipboard read: Tauri plugin on desktop (webview API is denied there). */
+export async function readClipboardText(): Promise<string> {
+  const clipboard = await import('@tauri-apps/plugin-clipboard-manager');
+  return clipboard.readText();
 }
 
 /** Inspect failure text: desktop has no backend, so say so plainly. */
