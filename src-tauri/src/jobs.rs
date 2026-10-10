@@ -569,12 +569,13 @@ async fn run_once(
                         },
                     )
                     .await;
-                } else if l.starts_with("[info] ") && l.contains("filepath") {
-                    final_path = l.split_whitespace().last().map(|s| s.to_string());
                 } else if l.starts_with("ERROR") {
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
                     return Err(anyhow!("{l}"));
+                } else if !l.starts_with('[') && !l.trim().is_empty() {
+                    // `--print after_move:filepath` emits the final path bare.
+                    final_path = Some(l.trim().to_string());
                 }
             }
             Ok(Err(e)) => return Err(anyhow!("output read: {e}")),

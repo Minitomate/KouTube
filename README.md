@@ -83,15 +83,26 @@ cargo tauri build
 Behavior notes:
 
 - First run streams missing tools from GitHub Releases with progress
-  (`tools://progress`); a partial ffmpeg install (no `ffprobe`) re-runs setup.
+  (`tools://progress`): yt-dlp (~30MB) + BtbN ffmpeg bundle (Linux `.tar.xz`
+  ~150MB, Windows `.zip` ~190MB — one-time cost). A partial ffmpeg install
+  (no `ffprobe`) re-runs setup.
 - Cancel/watchdog kills the whole process tree (Unix groups, Windows Job
   Objects) — yt-dlp forks ffmpeg for merges, killing one orphan the other.
 - ffmpeg progress arrives on stderr, yt-dlp on stdout; `queue://updated`
   snapshots are the status source of truth.
 - Sidecar binaries for packaging go in `src-tauri/binaries/<name>-<triple>`
   (`rustc --print host-tuple`); dev falls back to app-data bins, then PATH.
+- App icons: `cargo tauri icon src-tauri/icons/icon.svg` regenerates the set.
 - Web fallback (`make backend` + `npm run dev`) still works; the UI picks
   Tauri commands only under `__TAURI_INTERNALS__`.
+
+## Releases
+
+Manual only: push nothing automatically. When builds are tested and approved,
+run the **Release** workflow (Actions → Release → Run workflow, enter a
+version like `v0.1.0`). It builds Linux (AppImage + deb) and Windows
+(installer) and attaches them to a **draft** release — publish the draft by
+hand after testing the artifacts.
 
 ## Legal
 

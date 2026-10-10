@@ -11,7 +11,26 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const YTDLP_RELEASES: &str =
     "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+const YTDLP_RELEASES_WIN: &str =
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
 const FFMPEG_RELEASES: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz";
+const FFMPEG_RELEASES_WIN: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
+
+/// Per-OS tool assets: (label, url, archive_kind). `archive_kind` is None for
+/// raw binaries, Some("zip") / Some("tar.xz") for ffmpeg bundles.
+fn tool_assets() -> Vec<(&'static str, String, Option<&'static str>)> {
+    if cfg!(windows) {
+        vec![
+            ("yt-dlp", YTDLP_RELEASES_WIN.to_string(), None),
+            ("ffmpeg", FFMPEG_RELEASES_WIN.to_string(), Some("zip")),
+        ]
+    } else {
+        vec![
+            ("yt-dlp", YTDLP_RELEASES.to_string(), None),
+            ("ffmpeg", FFMPEG_RELEASES.to_string(), Some("tar.xz")),
+        ]
+    }
+}
 
 fn bins_dir(app: &AppHandle) -> Result<PathBuf> {
     let dir = app
@@ -145,15 +164,23 @@ pub async fn ensure_tools(app: &AppHandle) -> Result<serde_json::Value> {
     let dir = bins_dir(app)?;
     let mut bootstrapped = false;
     if resolve_tool(app, "yt-dlp").is_none() {
-        download_to(app, YTDLP_RELEASES, &dir.join(exe("yt-dlp")), "yt-dlp").await?;
+        let (_, url, _) = tool_assets()
+            .into_iter()
+            .find(|(l, _, _)| *l == "yt-dlp")
+            .unwrap();
+        download_to(app, &url, &dir.join(exe("yt-dlp")), "yt-dlp").await?;
         bootstrapped = true;
     }
     let need_ff = resolve_tool(app, "ffmpeg").is_none() || resolve_tool(app, "ffprobe").is_none();
     if need_ff {
-        let tarball = dir.join("ffmpeg.tar.xz");
-        download_to(app, FFMPEG_RELEASES, &tarball, "ffmpeg").await?;
-        extract_ffmpeg(&tarball, &dir)?;
-        let _ = std::fs::remove_file(&tarball);
+        let (_, url, kind) = tool_assets()
+            .into_iter()
+            .find(|(l, _, _)| *l == "ffmpeg")
+            .unwrap();
+        let archive = dir.join(format!("ffmpeg-bundle.{}", kind.unwrap_or("bin")));
+        download_to(app, &url, &archive, "ffmpeg").await?;
+        extract_ffmpeg(&archive, &dir)?;
+        let _ = std::fs::remove_file(&archive);
         bootstrapped = true;
     }
     if !have_all_tools(app) {
@@ -175,29 +202,55 @@ fn status(app: &AppHandle) -> serde_json::Value {
     })
 }
 
-fn extract_ffmpeg(tarball: &Path, dir: &Path) -> Result<()> {
-    // BtbN tarball: ffmpeg-master-latest-linux64-gpl/bin/{ffmpeg,ffprobe}.
-    // Shell out to system tar (always present next to a browser runtime);
-    // keeps heavy decompression deps out of the binary.
-    let out = std::process::Command::new("tar")
-        .args(["-xJf"])
-        .arg(tarball)
-        .args(["-C", &dir.to_string_lossy()])
-        .output()
-        .context("untar")?;
-    if !out.status.success() {
-        return Err(anyhow!("untar failed"));
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            for bin in ["ffmpeg", "ffprobe"] {
-                let src = entry.path().join("bin").join(exe(bin));
-                if src.is_file() {
-                    std::fs::rename(&src, dir.join(exe(bin)))?;
-                }
+/// Extract an ffmpeg bundle (BtbN layouts: `<root>/bin/{ffmpeg,ffprobe}`).
+/// Pure-Rust decoders: no system tar/unzip required on any OS.
+fn extract_ffmpeg(archive: &Path, dir: &Path) -> Result<()> {
+    let name = archive.to_string_lossy();
+    if name.ends_with(".zip") {
+        let file = std::fs::File::open(archive)?;
+        let mut zip = zip::ZipArchive::new(file)?;
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i)?;
+            let Some(fname) = entry
+                .enclosed_name()
+                .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+            else {
+                continue;
+            };
+            if fname == "ffmpeg"
+                || fname == "ffmpeg.exe"
+                || fname == "ffprobe"
+                || fname == "ffprobe.exe"
+            {
+                let mut out = std::fs::File::create(dir.join(exe(fname.trim_end_matches(".exe"))))?;
+                std::io::copy(&mut entry, &mut out)?;
             }
-            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    } else if name.ends_with(".tar.xz") {
+        let file = std::fs::File::open(archive)?;
+        let xz = xz2::read::XzDecoder::new(file);
+        let mut tar = tar::Archive::new(xz);
+        for entry in tar.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?.to_path_buf();
+            let Some(fname) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if fname == "ffmpeg" || fname == "ffprobe" {
+                entry.unpack(dir.join(fname))?;
+            }
+        }
+    } else {
+        return Err(anyhow!("unknown bundle format: {name}"));
+    }
+    #[cfg(unix)]
+    for bin in ["ffmpeg", "ffprobe"] {
+        let p = dir.join(bin);
+        if p.is_file() {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&p)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&p, perms)?;
         }
     }
     Ok(())
