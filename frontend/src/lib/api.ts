@@ -8,6 +8,10 @@ export interface CaptionTrack { id: string; label: string; lang: string; manual:
 export interface PlaylistEntry { videoId: string; title: string }
 export interface MediaInfo {
   title: string; duration: number; thumbnail?: string;
+  description: string;
+  channel?: string; channelUrl?: string; channelVerified?: boolean;
+  subscribers?: number; views?: number; uploadDate?: string;
+  avatarUrl?: string;
   qualities: string[]; audioTracks: AudioTrack[]; captions: CaptionTrack[];
   isPlaylist?: boolean; playlistCount?: number; entries?: PlaylistEntry[];
 }
@@ -24,6 +28,14 @@ const BackendResolve = z.object({
   title: z.string().default(''),
   thumbnail: z.string().nullable().optional(),
   duration: z.number().nullable().optional(),
+  description: z.string().nullable().optional(),
+  channel: z.string().nullable().optional(),
+  channelUrl: z.string().nullable().optional(),
+  channelVerified: z.boolean().nullable().optional(),
+  subscribers: z.number().nullable().optional(),
+  views: z.number().nullable().optional(),
+  uploadDate: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   formats: z.array(z.object({ height: z.number().nullable().optional() }))
     .default([]),
   audioTracks: z.array(z.object({
@@ -47,6 +59,14 @@ export function normalizeMedia(raw: unknown): MediaInfo {
     title: b.title,
     duration: b.duration ?? 0,
     thumbnail: b.thumbnail ?? undefined,
+    description: b.description ?? '',
+    channel: b.channel ?? undefined,
+    channelUrl: b.channelUrl ?? undefined,
+    channelVerified: b.channelVerified ?? undefined,
+    subscribers: b.subscribers ?? undefined,
+    views: b.views ?? undefined,
+    uploadDate: b.uploadDate ?? undefined,
+    avatarUrl: b.avatarUrl ?? undefined,
     qualities: ['best', ...heights.map(String)],
     audioTracks: [
       { id: 'original', label: 'Original' },

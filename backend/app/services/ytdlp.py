@@ -108,7 +108,49 @@ def collect_formats(info: dict) -> list[FormatInfo]:
     return sorted(out, key=lambda x: x.height or 0)
 
 
-def build_resolve_payload(info: dict) -> dict:
+_AVATAR_CACHE: dict[str, str | None] = {}
+
+
+def fetch_avatar(channel_url: str | None) -> str | None:
+    """Best-effort channel avatar (avatar_uncropped), cached, 10s budget."""
+    if not channel_url:
+        return None
+    if channel_url in _AVATAR_CACHE:
+        return _AVATAR_CACHE[channel_url]
+    out: str | None = None
+    try:
+        opts = {**BASE_OPTS, "skip_download": True, "playlist_items": "0",
+                "socket_timeout": 8}
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(channel_url, download=False) or {}
+        for t in info.get("thumbnails") or []:
+            if t.get("id") == "avatar_uncropped" and t.get("url"):
+                out = t["url"]
+                break
+        if out is None:
+            for t in info.get("thumbnails") or []:
+                if "googleusercontent" in (t.get("url") or ""):
+                    out = t["url"]
+                    break
+    except Exception:
+        out = None
+    _AVATAR_CACHE[channel_url] = out
+    return out
+
+
+def channel_fields(info: dict) -> dict:
+    return {
+        "description": info.get("description") or "",
+        "channel": info.get("channel") or info.get("uploader"),
+        "channelUrl": info.get("channel_url") or info.get("uploader_url"),
+        "channelVerified": info.get("channel_is_verified"),
+        "subscribers": info.get("channel_follower_count"),
+        "views": info.get("view_count"),
+        "uploadDate": info.get("upload_date") or info.get("release_date"),
+    }
+
+
+def build_resolve_payload(info: dict, avatar: str | None = None) -> dict:
     if info.get("_type") == "playlist" or "entries" in info:
         entries: list[PlaylistEntry] = []
         for e in (info.get("entries") or [])[:50]:
@@ -133,11 +175,22 @@ def build_resolve_payload(info: dict) -> dict:
         "title": info.get("title") or "",
         "thumbnail": thumbs,
         "duration": info.get("duration"),
+        **channel_fields(info),
+        "avatarUrl": avatar,
         "formats": collect_formats(info),
         "audioTracks": group_audio_tracks(info),
         "manualCaptions": filter_manual_captions(info),
         "is_playlist": False, "entries": [],
     }
+
+
+def resolve_full(url: str) -> dict:
+    """Blocking end-to-end resolve for threadpool use (extract+avatar+shape)."""
+    info = extract_info(url, "list=" in url)
+    if (info or {}).get("_type") == "playlist" or "entries" in (info or {}):
+        return build_resolve_payload(info)
+    avatar = fetch_avatar((info or {}).get("uploader_url") or (info or {}).get("channel_url"))
+    return build_resolve_payload(info or {}, avatar)
 
 
 def extract_info(url: str, playlist: bool = False) -> dict:

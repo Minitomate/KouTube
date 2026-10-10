@@ -1,13 +1,12 @@
 import { useRef, useState } from 'react';
 import { useStore, blankTransfer, tlog, type Transfer } from '../lib/store';
 import { api } from '../lib/api';
-import { prepare, transferUrl, downloadToDisk, downloadZip } from '../lib/transfer';
-import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs } from '../lib/desktop';
+import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA } from '../lib/transfer';
+import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent } from '../lib/desktop';
 import UrlBar from '../components/UrlBar';
-import FormatPicker from '../components/FormatPicker';
-import QualityPicker from '../components/QualityPicker';
-import AudioPicker from '../components/AudioPicker';
-import CaptionsPicker from '../components/CaptionsPicker';
+import MediaSkeleton from '../components/MediaSkeleton';
+import VideoInfoCard from '../components/VideoInfoCard';
+import DownloadOptionsCard from '../components/DownloadOptionsCard';
 import QueueView from '../components/QueueView';
 import Stepper from '../components/Stepper';
 import ThemeToggle from '../components/ThemeToggle';
@@ -15,7 +14,7 @@ import ThemeToggle from '../components/ThemeToggle';
 const ZIP_CAP = 10;
 
 export default function Home() {
-  const { url, media, format, quality, audioTrack, captions, set, upsertTransfer, queue } = useStore();
+  const { url, media, inspecting, format, quality, audioTrack, captions, set, upsertTransfer, queue } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
@@ -50,6 +49,13 @@ export default function Home() {
         ctl.signal, { requestId: rid, onStage: stage,
           directUrl: p.mergeRequired ? undefined : (p.videoUrl ?? undefined),
           noProbe: p.mergeRequired,
+          onRate: (bps, eta) => {
+            // Server notes win when fresh; client rate fills silence.
+            const cur = useStore.getState().queue.find((q) => q.id === id);
+            if (cur && cur.status === 'working' && !(cur.note ?? '').startsWith('server:')) {
+              upsertTransfer({ ...cur, note: `${fmtRate(bps)}${eta != null ? ` · ${fmtETA(eta)} left` : ''}` });
+            }
+          },
           onServerProgress: (sLoaded, sTotal, note) => {
             const cur = useStore.getState().queue.find((q) => q.id === id);
             // Only drive the bar pre-first-byte; real bytes take over after.
@@ -193,20 +199,18 @@ export default function Home() {
       { url: pageUrl, container: format, quality, audioTrack, captions },
       outDir,
       (e) => {
-        if (e.status === 'done') {
+        const m = mapDesktopEvent(e);
+        if (m.kind === 'done') {
           finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end', note: e.note ?? undefined }, 'event: done');
-        } else if (e.status === 'error') {
+        } else if (m.kind === 'error') {
           finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' }, `event: error ${e.error ?? ''}`);
-        } else if (e.status === 'cancelled') {
+        } else if (m.kind === 'cancelled') {
           finish({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' }, 'event: cancelled');
         } else {
           const cur = useStore.getState().queue.find((q) => q.id === transferId);
-          const liveStage = e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching';
           const base = {
-            id: transferId, title: e.title ?? title, loaded: e.percent, total: 100,
-            status: 'working' as const,
-            stage: liveStage as 'fetching' | 'finalizing',
-            note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? ''].filter(Boolean).join(' · ') || undefined,
+            id: transferId, title: e.title ?? title, loaded: m.percent, total: 100,
+            status: 'working' as const, stage: m.stage, note: m.note,
           };
           upsertTransfer(cur ? { ...cur, ...base } : { ...blankTransfer(transferId, title), ...base });
         }
@@ -270,22 +274,22 @@ export default function Home() {
     <>
       <Stepper />
       <UrlBar />
-      {media && !media.isPlaylist && (
-        <div className="card">
-          <h2>{media.title}</h2>
-          <div className="meta">{Math.round(media.duration)}s</div>
-        </div>
-      )}
       {media?.isPlaylist && (
         <div className="card">
           <h2>{media.title}</h2>
           <div className="meta">playlist · {media.playlistCount} videos {isTauri() ? `(files, max ${ZIP_CAP})` : `(ZIP, max ${ZIP_CAP})`}</div>
         </div>
       )}
-      <FormatPicker />
-      <QualityPicker />
-      <AudioPicker />
-      <CaptionsPicker />
+      <div className="inspect-grid">
+        <div>
+          {inspecting && <MediaSkeleton />}
+          {!inspecting && media && !media.isPlaylist && <VideoInfoCard media={media} />}
+          {!inspecting && !media && (
+            <div className="card"><p className="empty">Paste a link and press Inspect to see details.</p></div>
+          )}
+        </div>
+        <DownloadOptionsCard />
+      </div>
       <QueueView />
       {isTauri() && queue.length > 0 && (
         <button className="pill-btn tonal" onClick={copyDebugLog} aria-label="Copy debug log">

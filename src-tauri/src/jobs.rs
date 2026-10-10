@@ -89,14 +89,16 @@ pub async fn recent_logs() -> Vec<String> {
 }
 
 fn emit_progress(app: &AppHandle, job_id: &str, view: &JobView) {
-    let _ = app.emit(
+    if let Err(e) = app.emit(
         "dl://progress",
         serde_json::json!({
             "job_id": job_id, "status": view.status, "percent": view.percent,
             "speed": view.speed, "eta": view.eta, "title": view.title,
             "filepath": view.filepath, "error": view.error, "note": view.note,
         }),
-    );
+    ) {
+        blog(format!("emit dl://progress failed job={job_id}: {e}"));
+    }
 }
 
 async fn emit_queue(app: &AppHandle) {
@@ -164,8 +166,73 @@ pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
         return Err(anyhow!("resolve failed"));
     }
     let info: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    let avatar = fetch_avatar(
+        &ytdlp,
+        info.get("uploader_url")
+            .or_else(|| info.get("channel_url"))
+            .and_then(|v| v.as_str()),
+    )
+    .await;
     blog(format!("resolve ok url={}", short_url(url)));
-    Ok(build_resolve_payload(&info))
+    Ok(build_resolve_payload(&info, avatar))
+}
+
+/// Best-effort channel avatar: second lightweight resolve of the channel
+/// page, whose `thumbnails[]` carries `avatar_uncropped`. Cached per channel,
+/// 10s timeout, failures yield None (UI falls back to initials).
+fn avatar_cache() -> Arc<Mutex<HashMap<String, Option<String>>>> {
+    use std::sync::OnceLock;
+    static CELL: OnceLock<Arc<Mutex<HashMap<String, Option<String>>>>> = OnceLock::new();
+    CELL.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone()
+}
+
+async fn fetch_avatar(ytdlp: &std::path::Path, channel_url: Option<&str>) -> Option<String> {
+    let channel_url = channel_url?.to_string();
+    if let Some(hit) = avatar_cache().lock().await.get(&channel_url) {
+        return hit.clone();
+    }
+    let avatar = fetch_avatar_inner(ytdlp, &channel_url).await;
+    avatar_cache()
+        .lock()
+        .await
+        .insert(channel_url, avatar.clone());
+    avatar
+}
+
+async fn fetch_avatar_inner(ytdlp: &std::path::Path, channel_url: &str) -> Option<String> {
+    let mut cmd = tokio::process::Command::new(ytdlp);
+    cmd.args([
+        "--dump-json",
+        "--skip-download",
+        "--no-warnings",
+        "--socket-timeout",
+        "8",
+        "--playlist-items",
+        "0",
+        channel_url,
+    ])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+    let out = tokio::time::timeout(Duration::from_secs(10), cmd.output()).await.ok()??;
+    if !out.status.success() {
+        return None;
+    }
+    let info: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let thumbs = info.get("thumbnails")?.as_array()?;
+    thumbs
+        .iter()
+        .find(|t| t.get("id").and_then(|v| v.as_str()) == Some("avatar_uncropped"))
+        .or_else(|| {
+            thumbs.iter().find(|t| {
+                t.get("url")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|u| u.contains("googleusercontent"))
+            })
+        })
+        .and_then(|t| t.get("url"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Log-safe URL: host + video id only, never tokens or full query strings.
@@ -195,8 +262,9 @@ fn validate_url(url: &str) -> Result<String> {
     Ok(url.to_string())
 }
 
-/// Same shape as the old /api/resolve so the frontend normalizer is reused.
-fn build_resolve_payload(info: &serde_json::Value) -> serde_json::Value {
+/// Same shape as the old /api/resolve so the frontend normalizer is reused,
+/// plus channel metadata for the info card.
+fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> serde_json::Value {
     if info.get("_type").and_then(|v| v.as_str()) == Some("playlist")
         || info.get("entries").is_some()
     {
@@ -280,6 +348,14 @@ fn build_resolve_payload(info: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "videoId": info.get("id"), "title": info.get("title").and_then(|v| v.as_str()).unwrap_or(""),
         "thumbnail": info.get("thumbnail"), "duration": info.get("duration"),
+        "description": info.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+        "channel": info.get("channel").or_else(|| info.get("uploader")),
+        "channelUrl": info.get("channel_url").or_else(|| info.get("uploader_url")),
+        "channelVerified": info.get("channel_is_verified"),
+        "subscribers": info.get("channel_follower_count"),
+        "views": info.get("view_count"),
+        "uploadDate": info.get("upload_date").or_else(|| info.get("release_date")),
+        "avatarUrl": avatar,
         "formats": out_formats, "audioTracks": tracks, "manualCaptions": caps,
         "is_playlist": false, "entries": [],
     })

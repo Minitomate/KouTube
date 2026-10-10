@@ -24,6 +24,7 @@ export function tlog(t: Transfer, line: string): Transfer {
 interface State {
   step: 0 | 1 | 2;
   url: string;
+  inspecting: boolean;
   media: MediaInfo | null;
   format: Format;
   quality: string;
@@ -43,6 +44,7 @@ export { QUALITIES };
 export const useStore = create<State>((set) => ({
   step: 0,
   url: '',
+  inspecting: false,
   media: null,
   format: 'video',
   quality: 'best',

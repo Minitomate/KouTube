@@ -28,8 +28,8 @@ export class KouTubePage {
   }
 
   async pickQuality(q: string) {
-    // QualityPicker renders `Best` for "best", `${q}p` otherwise.
-    await this.page.getByLabel(`Quality ${q}`).click();
+    // DownloadOptionsCard renders Quality as a native select.
+    await this.page.getByLabel('Quality').selectOption(q);
   }
 
   async pickAudioTrack(id: string) {

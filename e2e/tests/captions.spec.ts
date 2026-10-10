@@ -20,8 +20,8 @@ test.describe('captions (manual-only)', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    // Fixture automatic_captions.en must be ignored: only 2 caption buttons.
-    await expect(page.getByRole('group', { name: 'Captions' }).getByRole('button')).toHaveCount(2);
+    // Fixture automatic_captions.en must be ignored: only 2 caption checkboxes.
+    await expect(page.getByRole('group', { name: /captions/i }).getByRole('checkbox')).toHaveCount(2);
     await expect(page.getByText(/auto-generated/i)).toHaveCount(0);
   });
 
@@ -55,6 +55,6 @@ test.describe('captions (manual-only)', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await expect(page.getByText('No captions available for this video.')).toBeVisible();
+    await expect(page.getByText('No manual captions for this video.')).toBeVisible();
   });
 });

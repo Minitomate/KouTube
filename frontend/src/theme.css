@@ -128,3 +128,30 @@ body {
 .meta { font-size: 13px; color: var(--outline); }
 .job { border-top: 1px solid var(--outline-variant); padding: 10px 0; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.inspect-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 720px) {
+  .inspect-grid { grid-template-columns: 1.2fr 1fr; align-items: start; }
+}
+.thumb-wrap { position: relative; border-radius: 16px; overflow: hidden; background: var(--surface-container-high); aspect-ratio: 16 / 9; }
+.thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pill-badge { position: absolute; right: 8px; bottom: 8px; background: rgb(0 0 0 / 0.8); color: #fff; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+.channel-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.avatar-fallback { display: inline-flex; align-items: center; justify-content: center; background: var(--primary-container); color: var(--on-primary-container); font-weight: 700; font-size: 18px; }
+.channel-id { display: flex; flex-direction: column; }
+.desc { font-size: 13px; white-space: pre-wrap; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: 13px; }
+.field > span, .field > legend { font-weight: 600; }
+fieldset.field { border: 0; padding: 0; }
+.check { display: flex; gap: 8px; align-items: center; font-weight: 400; padding: 4px 0; }
+.sk { border-radius: 12px; background: var(--surface-container-high); margin: 8px 0; animation: sk-pulse 1.2s ease-in-out infinite; }
+.sk-thumb { aspect-ratio: 16 / 9; }
+.sk-line { height: 16px; }
+.sk-row { display: flex; gap: 10px; align-items: center; }
+.sk-avatar { width: 40px; height: 40px; border-radius: 50%; margin: 0; }
+@keyframes sk-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .sk { animation: none; }
+  .progress-pill > div { transition: none; }
+}

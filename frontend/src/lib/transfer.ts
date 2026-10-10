@@ -89,6 +89,8 @@ export interface FetchOpts {
   onStage?: (stage: 'fetching' | 'finalizing', note?: string) => void;
   /** Server-side staging ticks (pre-first-byte): drive bar + note from them. */
   onServerProgress?: (loaded: number, total: number | null, note: string) => void;
+  /** Client-computed throughput from actual arrivals (fallback when server is silent). */
+  onRate?: (bytesPerSec: number, etaSec: number | null) => void;
   /** Direct upstream URL: probed first, proxy fallback on failure. */
   directUrl?: string;
   /** Skip the total probe (mux URLs: probing would run the merge twice). */
@@ -128,19 +130,40 @@ function totalFrom206(res: Response): number | null {
   return m ? Number(m[1]) : null;
 }
 
-function fmtMB(n: number): string {
+export function fmtMB(n: number): string {
   return `${(n / 1048576).toFixed(n >= 104857600 ? 0 : 1)} MB`;
 }
 
-function fmtRate(bps: number): string {
+export function fmtRate(bps: number): string {
   return bps >= 1048576 ? `${(bps / 1048576).toFixed(1)} MB/s` : `${Math.max(1, Math.round(bps / 1024))} KB/s`;
 }
 
-function fmtETA(s: number): string {
+export function fmtETA(s: number): string {
   if (!isFinite(s) || s < 0) return '';
   const m = Math.floor(s / 60);
   const sec = Math.round(s % 60);
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+/** Rolling-3s throughput tracker feeding onRate (client fallback numbers). */
+export function makeRateTracker(
+  onRate: ((bytesPerSec: number, etaSec: number | null) => void) | undefined,
+  getTotal: () => number | null,
+) {
+  const samples: Array<{ t: number; b: number }> = [];
+  return (loaded: number) => {
+    if (!onRate) return;
+    const now = performance.now();
+    samples.push({ t: now, b: loaded });
+    while (samples.length > 2 && now - samples[0].t > 3000) samples.shift();
+    if (samples.length < 2) return;
+    const dt = (now - samples[0].t) / 1000;
+    const db = loaded - samples[0].b;
+    if (dt <= 0 || db <= 0) return;
+    const bps = db / dt;
+    const total = getTotal();
+    onRate(bps, total !== null ? Math.max(0, (total - loaded) / bps) : null);
+  };
 }
 
 export async function downloadToDisk(
@@ -338,9 +361,11 @@ export async function downloadToDisk(
     const parts = planParts(total);
     const per = new Array<number>(parts.length).fill(0);
     let first = true;
+    const track = makeRateTracker(opts?.onRate, () => total);
     const report = () => {
       const sum = per.reduce((a, b) => a + b, 0);
       onProgress(sum, total);
+      track(sum);
       if (first) { first = false; onStage?.('fetching'); }
       if (sum >= total) onStage?.('finalizing', `${(sum / 1048576).toFixed(1)} MB received`);
     };
@@ -361,6 +386,7 @@ export async function downloadToDisk(
   };
 
   const fetchSequential = async (base: string): Promise<void> => {
+    const track = makeRateTracker(opts?.onRate, () => total);
     for (;;) {
       signal?.throwIfAborted();
       const fetchHeaders = { ...reqHeaders, Range: `bytes=${loaded}-` };
@@ -388,6 +414,7 @@ export async function downloadToDisk(
           await write(read.value);
           loaded += read.value.byteLength;
           onProgress(loaded, total);
+          track(loaded);
           if (firstByte) { firstByte = false; onStage?.('fetching'); }
           if (total !== null && loaded >= total) {
             onStage?.('finalizing', `${(loaded / 1048576).toFixed(1)} MB received`);

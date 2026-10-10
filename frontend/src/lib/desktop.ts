@@ -47,6 +47,29 @@ export interface DesktopEvent {
   note?: string | null;
 }
 
+export type CardStage = 'fetching' | 'finalizing';
+
+export interface MappedEvent {
+  kind: 'progress' | 'done' | 'error' | 'cancelled';
+  percent: number;
+  stage: CardStage;
+  note?: string;
+}
+
+/** Pure mapping: sidecar event -> card state. Unit-tested, no side effects. */
+export function mapDesktopEvent(e: DesktopEvent): MappedEvent {
+  if (e.status === 'done') return { kind: 'done', percent: 100, stage: 'finalizing' };
+  if (e.status === 'error') return { kind: 'error', percent: 0, stage: 'finalizing' };
+  if (e.status === 'cancelled') return { kind: 'cancelled', percent: 0, stage: 'fetching' };
+  return {
+    kind: 'progress',
+    percent: e.percent,
+    stage: e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching',
+    note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? '', e.note ?? '']
+      .filter(Boolean).join(' · ') || undefined,
+  };
+}
+
 /** Inspect failure text: desktop has no backend, so say so plainly. */
 export function inspectFailedMessage(desktop: boolean): string {
   return desktop

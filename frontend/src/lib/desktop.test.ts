@@ -81,6 +81,20 @@ describe('desktop adapter', () => {
     expect(inspectFailedMessage(true)).toBe('Could not inspect this video. Check the link and retry.');
     expect(inspectFailedMessage(false)).toContain('backend');
   });
+
+  it('maps sidecar events to card states', async () => {
+    const { mapDesktopEvent } = await import('./desktop');
+    expect(mapDesktopEvent({ job_id: 'j', status: 'downloading', percent: 42, speed: '1.0MB/s', eta: '00:03' }))
+      .toMatchObject({ kind: 'progress', percent: 42, stage: 'fetching' });
+    expect(mapDesktopEvent({ job_id: 'j', status: 'merging', percent: 100 }).stage).toBe('finalizing');
+    expect(mapDesktopEvent({ job_id: 'j', status: 'retrying', percent: 10 }).stage).toBe('finalizing');
+    expect(mapDesktopEvent({ job_id: 'j', status: 'done', percent: 100 }).kind).toBe('done');
+    expect(mapDesktopEvent({ job_id: 'j', status: 'error', percent: 0 }).kind).toBe('error');
+    expect(mapDesktopEvent({ job_id: 'j', status: 'cancelled', percent: 0 }).kind).toBe('cancelled');
+    const noted = mapDesktopEvent({ job_id: 'j', status: 'downloading', percent: 1, speed: '2.0MB/s', eta: '00:01' });
+    expect(noted.note).toContain('2.0MB/s');
+    expect(noted.note).toContain('ETA 00:01');
+  });
 });
 
 describe('resolveOutDir', () => {

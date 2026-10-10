@@ -24,6 +24,7 @@ export default function UrlBar() {
     }
     setError('');
     setLoading(true);
+    set({ inspecting: true });
     try {
       if (isTauri()) {
         try {
@@ -44,6 +45,7 @@ export default function UrlBar() {
       setError(inspectFailedMessage(isTauri()));
     } finally {
       setLoading(false);
+      set({ inspecting: false });
     }
   }
 

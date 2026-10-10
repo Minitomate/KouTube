@@ -16,18 +16,11 @@ async def resolve(req: ResolveRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"code": "invalid-url", "message": str(exc)})
     try:
-        # Playlist URLs go straight to flat extract (full extract would
-        # download metadata for every video and time out on big playlists).
-        is_playlist_url = "list=" in url
-        info = await run_in_threadpool(Y.extract_info, url, is_playlist_url)
+        # resolve_full picks flat extract for playlists (fast) and full
+        # extract + avatar for singles.
+        return await run_in_threadpool(Y.resolve_full, url)
     except ValueError:
         raise
     except Exception as exc:  # noqa: BLE001
-        # playlist fallback: try flat extract
-        try:
-            info = await run_in_threadpool(Y.extract_info, url, True)
-        except Exception as exc2:  # noqa: BLE001
-            code, msg = Y.classify_error(exc2 if "entries" in str(exc2).lower() else exc)
-            raise HTTPException(status_code=400, detail={"code": code, "message": msg})
-    payload = Y.build_resolve_payload(info or {})
-    return payload
+        code, msg = Y.classify_error(exc)
+        raise HTTPException(status_code=400, detail={"code": code, "message": msg})

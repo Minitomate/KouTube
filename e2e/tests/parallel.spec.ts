@@ -140,9 +140,9 @@ test.describe('parallel parts (user-end)', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    // Fixture heights are 480/720/1080: no 1440p/2160p/4320p chips.
-    await expect(page.getByLabel('Quality 1080')).toBeVisible();
-    await expect(page.getByLabel('Quality 4320')).toHaveCount(0);
-    await expect(page.getByText('Available up to 1080p for this video.')).toBeVisible();
+    // Fixture heights are 480/720/1080: exact 1080p option exists, 4320 does not.
+    await expect(page.getByRole('option', { name: '1080p', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('option', { name: /4320/ })).toHaveCount(0);
+    await expect(page.getByText(/up to 1080p/)).toBeVisible();
   });
 });
