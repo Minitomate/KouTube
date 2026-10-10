@@ -31,7 +31,7 @@ describe('desktop adapter', () => {
     invokeMock.mockResolvedValue('job-1');
     listenMock.mockResolvedValue(() => {});
     await startDesktopDownload(
-      { url: 'https://www.youtube.com/watch?v=x', container: 'audio', quality: 'best', audioTrack: 'original', captions: ['en'] },
+      { url: 'https://www.youtube.com/watch?v=x', kind: 'audio', outputContainer: 'mp3', quality: 'best', codec: 'auto', audioTracks: ['original'], captions: ['en'] },
       '/tmp/out',
       () => {},
     );
@@ -40,7 +40,8 @@ describe('desktop adapter', () => {
       container: 'mp3',
       quality: 'best',
       // Tauri exposes snake_case Rust params as camelCase: assert exact keys.
-      audioTrack: null,
+      codec: null,
+      audioTracks: [],
       captions: ['en'],
       outDir: '/tmp/out',
     });
@@ -55,7 +56,7 @@ describe('desktop adapter', () => {
     });
     const seen: string[] = [];
     await startDesktopDownload(
-      { url: 'u', container: 'video', quality: '720', audioTrack: 'en', captions: [] },
+      { url: 'u', kind: 'video', outputContainer: 'mkv', quality: '720', codec: 'avc', audioTracks: ['en', 'de'], captions: [] },
       '/tmp',
       (e) => seen.push(e.status),
     );
@@ -64,7 +65,7 @@ describe('desktop adapter', () => {
     expect(seen).toEqual(['downloading']);
     expect(invokeMock).toHaveBeenCalledWith(
       'start_download',
-      expect.objectContaining({ audioTrack: 'en', container: 'mp4' }),
+      expect.objectContaining({ audioTracks: ['en', 'de'], codec: 'avc', container: 'mkv' }),
     );
   });
 

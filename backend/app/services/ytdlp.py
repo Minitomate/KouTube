@@ -273,8 +273,25 @@ def _is_direct(f: dict) -> bool:
     return (f.get("protocol") or "https") in ("http", "https")
 
 
+_VCODEC_PREFIXES = {
+    "avc": ("avc1", "avc"),
+    "hevc": ("hev", "hvc", "hevc", "h265"),
+    "vp9": ("vp09", "vp9"),
+    "av1": ("av01", "av1"),
+}
+
+
+def _vcodec_ok(vcodec: str | None, codec: str | None) -> bool:
+    if not codec or codec == "auto":
+        return True
+    v = (vcodec or "").lower()
+    if not v or v == "none":
+        return False
+    return v.startswith(_VCODEC_PREFIXES.get(codec, (codec,)))
+
+
 def pick_streams(info: dict, container: str, quality: int | str,
-                 audio_lang: str | None = None) -> dict:
+                 audio_lang: str | None = None, codec: str | None = None) -> dict:
     """Pick direct stream URLs from a full (non-flat) info dict.
 
     Returns {video_url, audio_url|None, merge_required, size_estimate,
@@ -290,7 +307,8 @@ def pick_streams(info: dict, container: str, quality: int | str,
     def audio_pool() -> list[dict]:
         pool = [f for f in formats if (f.get("acodec") or "none") != "none"]
         if audio_lang:
-            lang_match = [f for f in pool if (f.get("language") or "") == audio_lang]
+            # Prefix match: YouTube tags dubs en-US/es-419; exact match fails.
+            lang_match = [f for f in pool if (f.get("language") or "").startswith(audio_lang)]
             if lang_match:
                 pool = lang_match
         pool = sorted(pool, key=lambda f: (f.get("abr") or 0, f.get("tbr") or 0),
@@ -309,7 +327,9 @@ def pick_streams(info: dict, container: str, quality: int | str,
                 "video_direct": True, "audio_direct": _is_direct(best)}
 
     q = None if quality == "best" else int(quality)
-    videos = [f for f in formats if (f.get("vcodec") or "none") != "none"]
+    videos = [f for f in formats
+              if (f.get("vcodec") or "none") != "none"
+              and _vcodec_ok(f.get("vcodec"), codec)]
     if q is not None:
         capped = [f for f in videos if _height_of(f) <= q]
         videos = capped or videos

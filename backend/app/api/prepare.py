@@ -34,7 +34,7 @@ async def prepare(req: PrepareRequest, request: Request):
             "code": "is-playlist",
             "message": "Playlist URL: prepare each video separately for ZIP batch."})
     try:
-        streams = Y.pick_streams(info, req.container, req.quality, req.audioTrackLang)
+        streams = Y.pick_streams(info, req.container, req.quality, req.audioTrackLang, req.codec)
     except ValueError:
         raise HTTPException(status_code=400, detail={
             "code": "no-formats", "message": "No downloadable formats for these choices."})

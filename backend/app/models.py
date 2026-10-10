@@ -65,6 +65,7 @@ class PrepareRequest(BaseModel):
     videoId: str | None = None
     container: Container = "mp4"
     quality: int | str = "best"
+    codec: str | None = None
     audioTrackLang: str | None = None
     embedCaptions: list[str] = Field(default_factory=list)
     subFormat: SubFormat = "srt"

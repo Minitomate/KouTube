@@ -45,8 +45,12 @@ export type Prepare = z.infer<typeof PrepareSchema>;
 
 export interface Choice {
   url: string;
+  /** 'video' | 'audio' format kind. */
   container: string;
+  /** Output container for video mode (mp4/webm/mkv). */
+  outputContainer?: string;
   quality: string;
+  codec?: string;
   audioTrack: string;
   captions: string[];
 }
@@ -57,8 +61,9 @@ export async function prepare(c: Choice): Promise<Prepare> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: c.url,
-      container: c.container === 'audio' ? 'mp3' : 'mp4',
+      container: c.container === 'audio' ? 'mp3' : (c.outputContainer ?? 'mp4'),
       quality: c.container === 'audio' ? 'best' : c.quality,
+      codec: c.codec && c.codec !== 'auto' ? c.codec : null,
       audioTrackLang: c.audioTrack === 'original' ? null : c.audioTrack,
       embedCaptions: c.captions,
       subFormat: 'srt',

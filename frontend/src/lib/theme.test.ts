@@ -30,6 +30,28 @@ describe('fmtRelative', () => {
   });
 });
 
+describe('effectiveQuality', () => {
+  it('computes nearest quality carrying the codec', async () => {
+    const { effectiveQuality, vcodecMatches } = await import('./store');
+    expect(vcodecMatches('avc1.640028', 'avc')).toBe(true);
+    expect(vcodecMatches('vp09.00.50.08', 'avc')).toBe(false);
+    expect(vcodecMatches('hev1.1.6', 'hevc')).toBe(true);
+    expect(vcodecMatches('hvc1.1.6', 'hevc')).toBe(true);
+    expect(vcodecMatches('av01.0.05M.08', 'av1')).toBe(true);
+    expect(vcodecMatches(undefined, 'avc')).toBe(false);
+    const formats = [
+      { height: 720, vcodec: 'avc1.4D401F' },
+      { height: 1080, vcodec: 'vp09.00.40.08' },
+      { height: 2160, vcodec: 'av01.0.13M.08' },
+    ];
+    expect(effectiveQuality(formats, 'best', 'auto')).toEqual({ quality: 'best', note: null });
+    expect(effectiveQuality(formats, '2160', 'avc')).toEqual({
+      quality: '720', note: 'AVC (H.264) best available: 720p',
+    });
+    expect(effectiveQuality(formats, '720', 'avc')).toEqual({ quality: '720', note: null });
+  });
+});
+
 describe('avatarThumb', () => {
   it('requests the small variant', () => {
     expect(avatarThumb('https://x.googleusercontent.com/a=s0')).toBe(

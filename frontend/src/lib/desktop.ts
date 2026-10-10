@@ -29,9 +29,11 @@ export async function desktopResolve(url: string): Promise<MediaInfo> {
 
 export interface DesktopChoice {
   url: string;
-  container: string;
+  kind: 'video' | 'audio';
+  outputContainer: string;
   quality: string;
-  audioTrack: string;
+  codec: string;
+  audioTracks: string[];
   captions: string[];
 }
 
@@ -132,11 +134,12 @@ export async function startDesktopDownload(
   const { invoke, listen } = await tauri();
   const jobId = (await invoke('start_download', {
     url: choice.url,
-    container: choice.container === 'audio' ? 'mp3' : 'mp4',
-    quality: choice.quality,
+    container: choice.kind === 'audio' ? 'mp3' : choice.outputContainer,
+    quality: choice.kind === 'audio' ? 'best' : choice.quality,
     // NOTE: Tauri exposes snake_case Rust params as camelCase — do NOT
     // "fix" these to snake_case (that breaks invoke with `missing key`).
-    audioTrack: choice.audioTrack === 'original' ? null : choice.audioTrack,
+    codec: choice.kind === 'audio' || choice.codec === 'auto' ? null : choice.codec,
+    audioTracks: choice.audioTracks.filter((t) => t !== 'original'),
     captions: choice.captions,
     outDir,
   })) as string;

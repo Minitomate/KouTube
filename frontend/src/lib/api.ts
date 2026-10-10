@@ -13,7 +13,9 @@ export interface MediaInfo {
   subscribers?: number; views?: number; uploadDate?: string;
   timestamp?: number;
   avatarUrl?: string;
-  qualities: string[]; audioTracks: AudioTrack[]; captions: CaptionTrack[];
+  qualities: string[];
+  formatCodecs: Array<{ height: number; vcodec: string }>;
+  audioTracks: AudioTrack[]; captions: CaptionTrack[];
   isPlaylist?: boolean; playlistCount?: number; entries?: PlaylistEntry[];
 }
 
@@ -38,7 +40,10 @@ const BackendResolve = z.object({
   uploadDate: z.string().nullable().optional(),
   timestamp: z.number().nullable().optional(),
   avatarUrl: z.string().nullable().optional(),
-  formats: z.array(z.object({ height: z.number().nullable().optional() }))
+  formats: z.array(z.object({
+    height: z.number().nullable().optional(),
+    vcodec: z.string().nullable().optional(),
+  }))
     .default([]),
   audioTracks: z.array(z.object({
     lang: z.string(), label: z.string(),
@@ -71,6 +76,9 @@ export function normalizeMedia(raw: unknown): MediaInfo {
     timestamp: b.timestamp ?? undefined,
     avatarUrl: b.avatarUrl ?? undefined,
     qualities: ['best', ...heights.map(String)],
+    formatCodecs: b.formats
+      .filter((f) => f.height && f.vcodec)
+      .map((f) => ({ height: f.height as number, vcodec: f.vcodec as string })),
     audioTracks: [
       { id: 'original', label: 'Original' },
       ...b.audioTracks

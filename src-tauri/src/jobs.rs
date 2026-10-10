@@ -24,7 +24,8 @@ pub struct DownloadSpec {
     pub url: String,
     pub container: String,
     pub quality: serde_json::Value,
-    pub audio_track: Option<String>,
+    pub codec: Option<String>,
+    pub audio_tracks: Vec<String>,
     pub captions: Vec<String>,
     pub out_dir: String,
     pub title: Option<String>,
@@ -382,29 +383,58 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
 
 const AUDIO_ONLY: [&str; 5] = ["mp3", "m4a", "opus", "wav", "flac"];
 
-fn quality_format(
+/// Map UI codec names to yt-dlp vcodec matchers. `^=` is a prefix match;
+/// HEVC needs alternation (hev1/hev* and hvc1 both occur in the wild).
+fn vcodec_filter(codec: &str) -> Option<&'static str> {
+    match codec {
+        "avc" => Some("[vcodec^=avc]"),
+        "hevc" => Some("[vcodec~=^(hev|hvc)]"),
+        "vp9" => Some("[vcodec^=vp09]"),
+        "av1" => Some("[vcodec^=av01]"),
+        _ => None,
+    }
+}
+
+fn quality_cap(quality: &serde_json::Value) -> String {
+    if quality.as_str() == Some("best") {
+        return String::new();
+    }
+    match quality
+        .as_u64()
+        .or_else(|| quality.as_str().and_then(|s| s.parse().ok()))
+    {
+        Some(q) => format!("[height<={q}]"),
+        None => String::new(),
+    }
+}
+
+/// Build the `-f` selector. Language matching uses the `^=` prefix operator:
+/// YouTube tags dubs `en-US`/`es-419`, so exact `=` fails in the wild.
+/// Every pinned track carries a `/bestaudio` fallback so a missing language
+/// degrades instead of aborting the download.
+fn build_format(
     quality: &serde_json::Value,
     container: &str,
-    audio_lang: &Option<String>,
-) -> String {
+    codec: &Option<String>,
+    audio_langs: &[String],
+) -> (String, bool) {
     if AUDIO_ONLY.contains(&container) {
-        return "bestaudio/best".to_string();
+        return ("bestaudio/best".to_string(), false);
     }
-    let audio = match audio_lang {
-        Some(l) => format!("bestaudio[language={l}]/bestaudio"),
-        None => "bestaudio".to_string(),
+    let mut video = format!("bestvideo{}", quality_cap(quality));
+    if let Some(c) = codec.as_deref().and_then(vcodec_filter) {
+        video.push_str(c);
+    }
+    let audios: Vec<String> = if audio_langs.is_empty() {
+        vec!["bestaudio".to_string()]
+    } else {
+        audio_langs
+            .iter()
+            .map(|l| format!("(bestaudio[language^={l}]/bestaudio)"))
+            .collect()
     };
-    match quality.as_str() {
-        Some("best") => return format!("bestvideo+{audio}/best"),
-        _ => {}
-    }
-    let q = quality
-        .as_u64()
-        .or_else(|| quality.as_str().and_then(|s| s.parse().ok()));
-    match q {
-        Some(q) => format!("bestvideo[height<={q}]+{audio}/best[height<={q}]/best"),
-        None => format!("bestvideo+{audio}/best"),
-    }
+    let multi = audios.len() > 1;
+    (format!("{}+{}/best", video, audios.join("+")), multi)
 }
 
 fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
@@ -414,6 +444,12 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
+    let (format, multistreams) = build_format(
+        &spec.quality,
+        &spec.container,
+        &spec.codec,
+        &spec.audio_tracks,
+    );
     let mut args = vec![
         "--newline".to_string(),
         "--no-warnings".to_string(),
@@ -425,12 +461,15 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         "--ffmpeg-location".to_string(),
         ffdir,
         "-f".to_string(),
-        quality_format(&spec.quality, &spec.container, &spec.audio_track),
+        format,
         "-o".to_string(),
         format!("{}/%(title)s [%(id)s].%(ext)s", spec.out_dir),
         "--print".to_string(),
         "after_move:filepath".to_string(),
     ];
+    if multistreams {
+        args.push("--audio-multistreams".to_string());
+    }
     if AUDIO_ONLY.contains(&spec.container.as_str()) {
         args.extend([
             "-x".to_string(),
@@ -920,6 +959,52 @@ mod tests {
         assert_eq!(fallback_percent("[download] 100%"), Some(100.0));
         assert_eq!(fallback_percent("[Merger] Merging"), None);
         assert_eq!(fallback_percent("no numbers here"), None);
+    }
+
+    #[test]
+    fn language_match_uses_prefix_with_fallback() {
+        let (fmt, multi) =
+            build_format(&serde_json::json!("720"), "mp4", &None, &["es".to_string()]);
+        assert!(fmt.contains("bestaudio[language^=es]/bestaudio"), "{fmt}");
+        assert!(!multi);
+    }
+
+    #[test]
+    fn multi_audio_chains_with_flag() {
+        let (fmt, multi) = build_format(
+            &serde_json::json!("best"),
+            "mkv",
+            &None,
+            &["en".to_string(), "de".to_string()],
+        );
+        assert!(
+            fmt.contains("(bestaudio[language^=en]/bestaudio)+(bestaudio[language^=de]/bestaudio)"),
+            "{fmt}"
+        );
+        assert!(multi);
+    }
+
+    #[test]
+    fn codec_filter_maps_names() {
+        let (fmt, _) = build_format(
+            &serde_json::json!("1080"),
+            "mp4",
+            &Some("avc".to_string()),
+            &[],
+        );
+        assert!(
+            fmt.contains("bestvideo[height<=1080][vcodec^=avc]"),
+            "{fmt}"
+        );
+        let (fmt, _) = build_format(
+            &serde_json::json!("best"),
+            "mp4",
+            &Some("hevc".to_string()),
+            &[],
+        );
+        assert!(fmt.contains("[vcodec~=^(hev|hvc)]"), "{fmt}");
+        let (fmt, _) = build_format(&serde_json::json!("best"), "mp4", &None, &[]);
+        assert!(fmt.contains("bestvideo+bestaudio/best"), "{fmt}");
     }
 
     #[test]

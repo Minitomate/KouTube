@@ -33,13 +33,19 @@ export class KouTubePage {
   }
 
   async pickAudioTrack(id: string) {
-    await this.page.getByLabel('Audio track').selectOption(id);
+    // DownloadOptionsCard audio is a MultiDropdown (button id md-audio-tracks).
+    // Scope to the open panel: native quality <option>s also match loosely.
+    await this.page.locator('[aria-labelledby="md-audio-tracks"]').click();
+    await this.page.locator('.md-panel').getByRole('option', { name: new RegExp(id, 'i') }).click();
+    await this.page.keyboard.press('Escape');
   }
 
   async pickCaptions(...labels: string[]) {
+    await this.page.locator('[aria-labelledby="md-captions"]').click();
     for (const label of labels) {
-      await this.page.getByLabel(`Caption ${label}`).click();
+      await this.page.locator('.md-panel').getByRole('option', { name: new RegExp(label, 'i') }).click();
     }
+    await this.page.keyboard.press('Escape');
   }
 
   async download() {

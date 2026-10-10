@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { useStore, blankTransfer, tlog, type Transfer } from '../lib/store';
+import { useEffect, useRef, useState } from 'react';
+import { useStore, blankTransfer, tlog, effectiveQuality, type Transfer } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA } from '../lib/transfer';
 import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent, pctRate } from '../lib/desktop';
@@ -14,7 +14,7 @@ import ThemeToggle from '../components/ThemeToggle';
 const ZIP_CAP = 10;
 
 export default function Home() {
-  const { url, media, inspecting, format, quality, audioTrack, captions, set, upsertTransfer, queue } = useStore();
+  const { url, media, inspecting, format, quality, container, codec, audioTracks, captions, set, upsertTransfer, queue, online } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
@@ -24,10 +24,80 @@ export default function Home() {
   const batchCancelled = useRef(false);
   const [canCancel, setCanCancel] = useState(false);
 
+  // Connectivity: navigator flag + lightweight probe; banner blocks starts.
+  useEffect(() => {
+    let dead = false;
+    const probe = async () => {
+      if (!navigator.onLine) {
+        if (!dead) set({ online: false });
+        return;
+      }
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 8000);
+        await fetch('https://www.youtube.com/generate_204', { mode: 'no-cors', signal: ctl.signal });
+        clearTimeout(timer);
+        if (!dead) set({ online: true });
+      } catch {
+        if (!dead) set({ online: false });
+      }
+    };
+    const onUp = () => void probe();
+    const onDown = () => { if (!dead) set({ online: false }); };
+    window.addEventListener('online', onUp);
+    window.addEventListener('offline', onDown);
+    void probe();
+    return () => {
+      dead = true;
+      window.removeEventListener('online', onUp);
+      window.removeEventListener('offline', onDown);
+    };
+  }, [set]);
+
+  // Desktop window: fit small screens, floor the minimum, center.
+  useEffect(() => {
+    if (!isTauri()) return;
+    (async () => {
+      try {
+        const win = await import('@tauri-apps/api/window');
+        const current = win.getCurrentWindow();
+        const monitor = await win.primaryMonitor();
+        const avail = monitor?.size;
+        const scale = monitor?.scaleFactor || 1;
+        const availW = avail ? avail.width / scale : 1280;
+        const availH = avail ? avail.height / scale : 900;
+        await current.setMinSize(new win.LogicalSize(480, 700));
+        await current.setSize(new win.LogicalSize(
+          Math.round(Math.min(1120, availW - 80)),
+          Math.round(Math.min(900, availH - 120)),
+        ));
+        await current.center();
+      } catch { /* best effort: default window stands */ }
+    })();
+  }, []);
+
   function fail(message: string) {
     setError(message);
     setBusy(false);
     setCanCancel(false);
+  }
+
+  /** Effective container/quality/notes from codec availability + rules. */
+  function planDownload(): { quality: string; container: string; notes: string[] } {
+    const notes: string[] = [];
+    let cont: string = format === 'audio' ? 'mp3' : container;
+    let q = quality;
+    if (format === 'video' && media && !media.isPlaylist) {
+      const eff = effectiveQuality(media.formatCodecs, quality, codec);
+      if (eff.note) notes.push(eff.note);
+      q = eff.quality;
+      const dubs = audioTracks.filter((t) => t !== 'original');
+      if (dubs.length > 1 && cont === 'mp4') {
+        cont = 'mkv';
+        notes.push('Merging to MKV: multiple audio tracks cannot go in MP4.');
+      }
+    }
+    return { quality: q, container: cont, notes };
   }
 
   async function downloadSingle(pageUrl: string, title: string) {
@@ -39,7 +109,9 @@ export default function Home() {
     };
     try {
       upsertTransfer({ id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', rid });
-      const p = await prepare({ url: pageUrl, container: format, quality, audioTrack, captions });
+      const plan = planDownload();
+      if (plan.notes.length) setWarn(plan.notes.join(' '));
+      const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: audioTracks[0] ?? 'original', captions });
       const ctl = new AbortController();
       abortRef.current = ctl;
       setCanCancel(true);
@@ -78,6 +150,7 @@ export default function Home() {
 
   async function download() {
     if (!url) { setError('Paste a YouTube URL first.'); return; }
+    if (!online) { setError('You are offline. Reconnect to download.'); return; }
     setError('');
     setWarn('');
     if (isTauri()) {
@@ -101,7 +174,9 @@ export default function Home() {
           const id = `zip-${i}`;
           upsertTransfer({ id, title: e.title || e.videoId, loaded: 0, total: null, status: 'working', stage: 'preparing' });
           try {
-            const p = await prepare({ url: pageUrl, container: format, quality, audioTrack, captions });
+            const plan = planDownload();
+            if (plan.notes.length) setWarn(plan.notes.join(' '));
+            const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: audioTracks[0] ?? 'original', captions });
             upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching' });
             zipItems.push({ filename: p.filename, url: transferUrl(p), sizeEstimate: p.sizeEstimate });
           } catch (e2) {
@@ -184,6 +259,8 @@ export default function Home() {
   ): Promise<void> {
     const put = (t: Parameters<typeof upsertTransfer>[0]) => upsertTransfer(tlog(t, t.stage));
     put({ ...blankTransfer(transferId, title), note: 'folder ok, starting' });
+    const plan = planDownload();
+    if (plan.notes.length) setWarn(plan.notes.join(' '));
     // Resolves only on terminal events so playlist items run sequentially.
     let stopFn = () => {};
     const resolveRef: { current: null | (() => void) } = { current: null };
@@ -197,7 +274,10 @@ export default function Home() {
       stopFn(); resolveRef.current?.();
     };
     startDesktopDownload(
-      { url: pageUrl, container: format, quality, audioTrack, captions },
+      {
+        url: pageUrl, kind: format, outputContainer: plan.container,
+        quality: plan.quality, codec, audioTracks, captions,
+      },
       outDir,
       (e) => {
         const m = mapDesktopEvent(e);
@@ -281,6 +361,12 @@ export default function Home() {
     <>
       <Stepper />
       <UrlBar />
+      {!online && (
+        <div className="card" role="alert">
+          <strong>You're offline.</strong>
+          <span className="meta"> Downloads and inspection need a connection — they'll work again when you're back.</span>
+        </div>
+      )}
       {media?.isPlaylist && (
         <div className="card">
           <h2>{media.title}</h2>
