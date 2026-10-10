@@ -31,6 +31,7 @@ async fn start_download(
     audio_track: Option<String>,
     captions: Vec<String>,
     out_dir: String,
+    title: Option<String>,
 ) -> Result<String, String> {
     jobs::start_download(
         &app,
@@ -41,6 +42,7 @@ async fn start_download(
             audio_track,
             captions,
             out_dir,
+            title,
         },
     )
     .await

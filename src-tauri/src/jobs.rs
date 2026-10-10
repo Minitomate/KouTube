@@ -27,6 +27,7 @@ pub struct DownloadSpec {
     pub audio_track: Option<String>,
     pub captions: Vec<String>,
     pub out_dir: String,
+    pub title: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -93,6 +94,12 @@ async fn set_status(app: &AppHandle, job_id: &str, view: JobView) {
     }
     emit_progress(app, job_id, &view);
     emit_queue(app).await; // canonical snapshot AFTER every transition
+}
+
+/// Terminal transition: snapshot, then drop the job so the map can't leak.
+async fn finish(app: &AppHandle, job_id: &str, view: JobView) {
+    set_status(app, job_id, view).await;
+    jobs().lock().await.remove(job_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -362,12 +369,13 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
         }
         match run_once(&app, &job_id, &spec, attempt).await {
             Ok(done_path) => {
-                set_status(
+                finish(
                     &app,
                     &job_id,
                     JobView {
                         status: "done".into(),
                         percent: 100.0,
+                        title: spec.title.clone(),
                         filepath: done_path,
                         ..Default::default()
                     },
@@ -380,11 +388,12 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                     return;
                 }
                 if attempt == MAX_RETRIES {
-                    set_status(
+                    finish(
                         &app,
                         &job_id,
                         JobView {
                             status: "error".into(),
+                            title: spec.title.clone(),
                             error: Some(friendly_error(&e)),
                             ..Default::default()
                         },
@@ -495,11 +504,18 @@ async fn run_once(
 
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;
-    // ffmpeg progress arrives on STDERR; drain it so the pipe never blocks.
-    tauri::async_runtime::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while lines.next_line().await.unwrap_or(None).is_some() {}
-    });
+    // ffmpeg progress arrives on STDERR: drain it (never block the pipe) and
+    // timestamp it — the merge watchdog below depends on this heartbeat.
+    let last_io = Arc::new(Mutex::new(Instant::now()));
+    {
+        let last_io = last_io.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while lines.next_line().await.unwrap_or(None).is_some() {
+                *last_io.lock().await = Instant::now();
+            }
+        });
+    }
 
     let mut reader = BufReader::new(stdout).lines();
     let mut last_out = Instant::now();
@@ -510,15 +526,17 @@ async fn run_once(
         match line {
             Err(_) => {
                 // 1s tick: watchdog check without blocking output.
-                if last_out.elapsed() > IDLE_TIMEOUT && !merging {
+                let quiet = last_out.elapsed() > IDLE_TIMEOUT;
+                let merge_quiet = { *last_io.lock().await }.elapsed() > Duration::from_secs(120);
+                if (quiet && !merging) || (merging && merge_quiet) {
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
-                    return Err(anyhow!("stalled: no progress for 30s"));
+                    return Err(anyhow!("stalled: no progress (merging heartbeat lost)"));
                 }
                 if is_cancelled(job_id).await {
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
-                    set_status(
+                    finish(
                         app,
                         job_id,
                         JobView {
@@ -551,6 +569,7 @@ async fn run_once(
                             percent: ev.0,
                             speed: ev.1,
                             eta: ev.2,
+                            title: spec.title.clone(),
                             ..Default::default()
                         },
                     )
@@ -566,6 +585,7 @@ async fn run_once(
                         JobView {
                             status: "merging".into(),
                             percent: 100.0,
+                            title: spec.title.clone(),
                             ..Default::default()
                         },
                     )
@@ -576,7 +596,12 @@ async fn run_once(
                     return Err(anyhow!("{l}"));
                 } else if !l.starts_with('[') && !l.trim().is_empty() {
                     // `--print after_move:filepath` emits the final path bare.
-                    final_path = Some(l.trim().to_string());
+                    // Only absolute paths qualify: warnings must never win.
+                    let t = l.trim();
+                    let absolute = t.starts_with('/') || (t.len() > 2 && t.as_bytes()[1] == b':');
+                    if absolute {
+                        final_path = Some(t.to_string());
+                    }
                 }
             }
             Ok(Err(e)) => return Err(anyhow!("output read: {e}")),
@@ -665,7 +690,7 @@ pub async fn cancel(app: &AppHandle, job_id: &str) -> Result<()> {
         }
     }
     kill_tree(job_id).await;
-    set_status(
+    finish(
         app,
         job_id,
         JobView {

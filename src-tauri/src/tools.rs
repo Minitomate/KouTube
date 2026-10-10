@@ -123,11 +123,23 @@ async fn download_to(app: &AppHandle, url: &str, dest: &Path, label: &str) -> Re
         return Err(anyhow!("{} download: HTTP {}", label, res.status()));
     }
     let total = res.content_length();
+    // Atomic: stream to temp, rename only on complete non-empty success, so a
+    // crashed first run can never leave a "healthy-looking" half binary.
+    let tmp = dest.with_extension("part");
     let mut stream = res.bytes_stream();
-    let mut file = tokio::fs::File::create(dest).await?;
+    let mut file = tokio::fs::File::create(&tmp).await?;
     let mut loaded: u64 = 0;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("body")?;
+    loop {
+        let next = tokio::time::timeout(std::time::Duration::from_secs(60), stream.next()).await;
+        let chunk = match next {
+            Err(_) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(anyhow!("{label} download stalled (60s without bytes)"));
+            }
+            Ok(None) => break,
+            Ok(Some(chunk)) => chunk.context("body")?,
+        };
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await?;
         loaded += chunk.len() as u64;
         let _ = app.emit(
@@ -137,13 +149,19 @@ async fn download_to(app: &AppHandle, url: &str, dest: &Path, label: &str) -> Re
             }),
         );
     }
+    drop(file);
+    if loaded == 0 {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(anyhow!("{label} download is empty"));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = tokio::fs::metadata(dest).await?.permissions();
+        let mut perms = tokio::fs::metadata(&tmp).await?.permissions();
         perms.set_mode(0o755);
-        tokio::fs::set_permissions(dest, perms).await?;
+        tokio::fs::set_permissions(&tmp, perms).await?;
     }
+    tokio::fs::rename(&tmp, dest).await?;
     let _ = app.emit(
         "tools://progress",
         serde_json::json!({

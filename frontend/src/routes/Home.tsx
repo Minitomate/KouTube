@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip } from '../lib/transfer';
-import { isTauri, pickFolder, startDesktopDownload } from '../lib/desktop';
+import { isTauri, pickFolder, startDesktopDownload, ensureDesktopTools } from '../lib/desktop';
 import UrlBar from '../components/UrlBar';
 import FormatPicker from '../components/FormatPicker';
 import QualityPicker from '../components/QualityPicker';
@@ -20,11 +20,14 @@ export default function Home() {
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
   const abortRef = useRef<AbortController | null>(null);
-  const desktopJob = useRef<string | null>(null);
+  const desktopJobs = useRef(new Map<string, string>());
+  const batchCancelled = useRef(false);
+  const [canCancel, setCanCancel] = useState(false);
 
   function fail(message: string) {
     setError(message);
     setBusy(false);
+    setCanCancel(false);
   }
 
   async function downloadSingle(pageUrl: string, title: string) {
@@ -39,6 +42,7 @@ export default function Home() {
       const p = await prepare({ url: pageUrl, container: format, quality, audioTrack, captions });
       const ctl = new AbortController();
       abortRef.current = ctl;
+      setCanCancel(true);
       upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching', rid });
       if (p.warnings.length) setWarn(p.warnings.join(' '));
       await downloadToDisk(transferUrl(p), p.filename, p.sizeEstimate,
@@ -118,57 +122,112 @@ export default function Home() {
       fail(e instanceof Error ? e.message : 'Could not start download. Is the backend running?');
     } finally {
       setBusy(false);
+      setCanCancel(false);
     }
   }
 
   function cancel() {
     abortRef.current?.abort();
-    const jid = desktopJob.current;
-    desktopJob.current = null;
-    if (jid) {
-      import('../lib/desktop').then((d) => d.cancelDesktopDownload(jid).catch(() => {}));
+    batchCancelled.current = true;
+    const ids = [...desktopJobs.current.values()];
+    desktopJobs.current.clear();
+    setCanCancel(false);
+    if (ids.length) {
+      import('../lib/desktop').then((d) =>
+        Promise.all(ids.map((jid) => d.cancelDesktopDownload(jid).catch(() => {}))),
+      );
     }
   }
 
+  async function downloadDesktopOne(
+    pageUrl: string,
+    title: string,
+    outDir: string,
+    transferId: string,
+  ): Promise<void> {
+    upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'working', stage: 'preparing' });
+    // Resolves only on terminal events so playlist items run sequentially.
+    let stopFn = () => {};
+    const resolveRef: { current: null | (() => void) } = { current: null };
+    const done = new Promise<void>((resolve) => { resolveRef.current = resolve; });
+    startDesktopDownload(
+      { url: pageUrl, container: format, quality, audioTrack, captions },
+      outDir,
+      (e) => {
+        if (e.status === 'done') {
+          upsertTransfer({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end' });
+          desktopJobs.current.delete(transferId);
+          if (!desktopJobs.current.size) setCanCancel(false);
+          setBusy(false);
+          stopFn(); resolveRef.current?.();
+        } else if (e.status === 'error') {
+          upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' });
+          desktopJobs.current.delete(transferId);
+          if (!desktopJobs.current.size) setCanCancel(false);
+          setBusy(false);
+          stopFn(); resolveRef.current?.();
+        } else if (e.status === 'cancelled') {
+          upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' });
+          desktopJobs.current.delete(transferId);
+          if (!desktopJobs.current.size) setCanCancel(false);
+          setBusy(false);
+          stopFn(); resolveRef.current?.();
+        } else {
+          upsertTransfer({
+            id: transferId, title: e.title ?? title, loaded: e.percent, total: 100,
+            status: 'working',
+            stage: e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching',
+            note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? ''].filter(Boolean).join(' · ') || undefined,
+          });
+        }
+      },
+    ).then(({ jobId, stop }) => {
+      stopFn = stop;
+      desktopJobs.current.set(transferId, jobId);
+      setCanCancel(true);
+    }).catch((err) => {
+      upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'error', error: err instanceof Error ? err.message : 'failed', stage: 'end' });
+      setBusy(false);
+      resolveRef.current?.();
+    });
+    await done;
+  }
+
   async function downloadDesktop() {
+    try {
+      await ensureDesktopTools();
+    } catch (e) {
+      setError(e instanceof Error
+        ? `Setup failed: ${e.message}. Check your connection and retry.`
+        : 'Setup failed. Check your connection and retry.');
+      return;
+    }
     const outDir = localStorage.getItem('koutube-outdir') || await pickFolder();
     if (!outDir || Array.isArray(outDir)) return;
     localStorage.setItem('koutube-outdir', outDir);
     setBusy(true);
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    upsertTransfer({ id, title: media?.title ?? url, loaded: 0, total: null, status: 'working', stage: 'preparing' });
+    batchCancelled.current = false;
     try {
-      const { jobId, stop } = await startDesktopDownload(
-        { url, container: format, quality, audioTrack, captions },
-        outDir,
-        (e) => {
-          if (e.status === 'done') {
-            upsertTransfer({ id, title: e.title ?? url, loaded: 100, total: 100, status: 'done', stage: 'end' });
-            setBusy(false);
-            stop();
-          } else if (e.status === 'error') {
-            upsertTransfer({ id, title: url, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' });
-            setBusy(false);
-            stop();
-          } else if (e.status === 'cancelled') {
-            upsertTransfer({ id, title: url, loaded: 0, total: null, status: 'cancelled', stage: 'end' });
-            setBusy(false);
-            stop();
-          } else {
-            upsertTransfer({
-              id, title: e.title ?? url, loaded: e.percent, total: 100,
-              status: 'working',
-              stage: e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching',
-              note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? ''].filter(Boolean).join(' · ') || undefined,
-            });
+      if (media?.isPlaylist && media.entries?.length) {
+        // Desktop playlist: sequential singles into the chosen folder.
+        batchCancelled.current = false;
+        const items = media.entries.slice(0, ZIP_CAP);
+        for (const [i, e] of items.entries()) {
+          if (batchCancelled.current) break;
+          const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
+          try {
+            await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Item failed');
           }
-        },
-      );
-      abortRef.current = { abort: () => { stop(); } } as AbortController;
-      desktopJob.current = jobId;
-      void stop;
+        }
+      } else {
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await downloadDesktopOne(url, media?.title ?? url, outDir, id);
+      }
+      set({ step: 2 });
     } catch (e) {
-      upsertTransfer({ id, title: url, loaded: 0, total: null, status: 'error', error: e instanceof Error ? e.message : 'failed', stage: 'end' });
+      upsertTransfer({ id: 'desk-batch', title: url, loaded: 0, total: null, status: 'error', error: e instanceof Error ? e.message : 'failed', stage: 'end' });
       setBusy(false);
     }
   }
@@ -186,7 +245,7 @@ export default function Home() {
       {media?.isPlaylist && (
         <div className="card">
           <h2>{media.title}</h2>
-          <div className="meta">playlist · {media.playlistCount} videos (ZIP, max {ZIP_CAP})</div>
+          <div className="meta">playlist · {media.playlistCount} videos {isTauri() ? `(files, max ${ZIP_CAP})` : `(ZIP, max ${ZIP_CAP})`}</div>
         </div>
       )}
       <FormatPicker />
@@ -201,7 +260,7 @@ export default function Home() {
           <button className="pill-btn filled" onClick={download} disabled={busy || !url} aria-label={media?.isPlaylist ? 'Download ZIP' : 'Download'}>
             {busy ? 'Working…' : media?.isPlaylist ? 'Download ZIP' : 'Download'}
           </button>
-          {busy && (
+          {busy && canCancel && (
             <button className="pill-btn outlined" onClick={cancel} aria-label="Cancel download">
               Cancel
             </button>
