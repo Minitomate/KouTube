@@ -63,6 +63,36 @@ npx playwright test -c smoke.config.ts --project=chromium
 `../.venv/bin/python -m uvicorn`); `smoke.config.ts` reuses your running servers.
 Trace on retry, screenshots on failure, downloads accepted.
 
+## Desktop app (Tauri, local-only)
+
+No server: the React UI talks to Rust commands that drive `yt-dlp`/`ffmpeg`
+sidecars, saving straight to your disk.
+
+```bash
+# one-time system deps (Debian/Ubuntu; needs sudo)
+sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+  librsvg2-dev patchelf pkg-config
+# Rust toolchain: https://rustup.rs
+
+# dev (auto-downloads yt-dlp/ffmpeg/ffprobe into the app-data dir on first run)
+cargo tauri dev
+# release bundle (per-OS; notarize/sign for distribution)
+cargo tauri build
+```
+
+Behavior notes:
+
+- First run streams missing tools from GitHub Releases with progress
+  (`tools://progress`); a partial ffmpeg install (no `ffprobe`) re-runs setup.
+- Cancel/watchdog kills the whole process tree (Unix groups, Windows Job
+  Objects) — yt-dlp forks ffmpeg for merges, killing one orphan the other.
+- ffmpeg progress arrives on stderr, yt-dlp on stdout; `queue://updated`
+  snapshots are the status source of truth.
+- Sidecar binaries for packaging go in `src-tauri/binaries/<name>-<triple>`
+  (`rustc --print host-tuple`); dev falls back to app-data bins, then PATH.
+- Web fallback (`make backend` + `npm run dev`) still works; the UI picks
+  Tauri commands only under `__TAURI_INTERNALS__`.
+
 ## Legal
 
 YouTube ToS: download only videos you own or that permit offline use.

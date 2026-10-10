@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
+import { isTauri, desktopResolve, ensureDesktopTools } from '../lib/desktop';
 
 const ytSchema = z.string().url().refine(
   (u) => /(youtube\.com|youtu\.be)/.test(u),
@@ -24,8 +25,14 @@ export default function UrlBar() {
     setError('');
     setLoading(true);
     try {
-      const media = await api.resolve(value);
-      set({ url: value, media, step: 1 });
+      if (isTauri()) {
+        try { await ensureDesktopTools(); } catch { /* setup screen later */ }
+        const media = await desktopResolve(value);
+        set({ url: value, media, step: 1 });
+      } else {
+        const media = await api.resolve(value);
+        set({ url: value, media, step: 1 });
+      }
     } catch {
       setError('Could not inspect URL. Is the backend running?');
     } finally {

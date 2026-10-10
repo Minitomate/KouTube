@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip } from '../lib/transfer';
+import { isTauri, pickFolder, startDesktopDownload } from '../lib/desktop';
 import UrlBar from '../components/UrlBar';
 import FormatPicker from '../components/FormatPicker';
 import QualityPicker from '../components/QualityPicker';
@@ -19,6 +20,7 @@ export default function Home() {
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+  const desktopJob = useRef<string | null>(null);
 
   function fail(message: string) {
     setError(message);
@@ -67,6 +69,7 @@ export default function Home() {
     if (!url) { setError('Paste a YouTube URL first.'); return; }
     setError('');
     setWarn('');
+    if (isTauri()) { await downloadDesktop(); return; }
     setBusy(true);
     try {
       if (media?.isPlaylist && media.entries?.length) {
@@ -120,6 +123,54 @@ export default function Home() {
 
   function cancel() {
     abortRef.current?.abort();
+    const jid = desktopJob.current;
+    desktopJob.current = null;
+    if (jid) {
+      import('../lib/desktop').then((d) => d.cancelDesktopDownload(jid).catch(() => {}));
+    }
+  }
+
+  async function downloadDesktop() {
+    const outDir = localStorage.getItem('koutube-outdir') || await pickFolder();
+    if (!outDir || Array.isArray(outDir)) return;
+    localStorage.setItem('koutube-outdir', outDir);
+    setBusy(true);
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    upsertTransfer({ id, title: media?.title ?? url, loaded: 0, total: null, status: 'working', stage: 'preparing' });
+    try {
+      const { jobId, stop } = await startDesktopDownload(
+        { url, container: format, quality, audioTrack, captions },
+        outDir,
+        (e) => {
+          if (e.status === 'done') {
+            upsertTransfer({ id, title: e.title ?? url, loaded: 100, total: 100, status: 'done', stage: 'end' });
+            setBusy(false);
+            stop();
+          } else if (e.status === 'error') {
+            upsertTransfer({ id, title: url, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' });
+            setBusy(false);
+            stop();
+          } else if (e.status === 'cancelled') {
+            upsertTransfer({ id, title: url, loaded: 0, total: null, status: 'cancelled', stage: 'end' });
+            setBusy(false);
+            stop();
+          } else {
+            upsertTransfer({
+              id, title: e.title ?? url, loaded: e.percent, total: 100,
+              status: 'working',
+              stage: e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching',
+              note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? ''].filter(Boolean).join(' · ') || undefined,
+            });
+          }
+        },
+      );
+      abortRef.current = { abort: () => { stop(); } } as AbortController;
+      desktopJob.current = jobId;
+      void stop;
+    } catch (e) {
+      upsertTransfer({ id, title: url, loaded: 0, total: null, status: 'error', error: e instanceof Error ? e.message : 'failed', stage: 'end' });
+      setBusy(false);
+    }
   }
 
   return (

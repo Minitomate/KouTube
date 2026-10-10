@@ -38,7 +38,7 @@ const BackendResolve = z.object({
   })).default([]),
 });
 
-function normalizeMedia(raw: unknown): MediaInfo {
+export function normalizeMedia(raw: unknown): MediaInfo {
   const b = BackendResolve.parse(raw);
   const heights = [...new Set(
     b.formats.map((f) => f.height).filter((h): h is number => !!h),
