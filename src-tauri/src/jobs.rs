@@ -46,8 +46,10 @@ struct JobHandle {
     view: JobView,
     // Unix: child started in its own session → killpg(child_pid).
     child_pid: Option<u32>,
+    // Windows: Job Object address as usize — HANDLE (*mut c_void) is not
+    // Send and must never live in shared state; reconstructed at kill time.
     #[cfg(windows)]
-    job_object: Option<windows::Win32::Foundation::HANDLE>,
+    job_object: Option<usize>,
     cancelled: bool,
 }
 
@@ -944,10 +946,10 @@ async fn kill_tree(job_id: &str) {
         let map = jobs();
         let guard = map.lock().await;
         if let Some(h) = guard.get(job_id) {
-            if let Some(job) = h.job_object {
+            if let Some(addr) = h.job_object {
                 unsafe {
-                    use windows::Win32::System::JobObjects::TerminateJobObject;
-                    let _ = TerminateJobObject(job, 1);
+                    let handle = windows::Win32::Foundation::HANDLE(addr as *mut _);
+                    let _ = windows::Win32::System::JobObjects::TerminateJobObject(handle, 1);
                 }
             }
         }
@@ -955,12 +957,16 @@ async fn kill_tree(job_id: &str) {
 }
 
 #[cfg(windows)]
-fn assign_job_object(pid: Option<u32>) -> Option<windows::Win32::Foundation::HANDLE> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::JobObjects::*;
+fn assign_job_object(pid: Option<u32>) -> Option<usize> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_ALL_ACCESS};
     unsafe {
-        let job = CreateJobObjectW(None, None).ok()?;
+        let job: HANDLE = CreateJobObjectW(None, None).ok()?;
         let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         SetInformationJobObject(
@@ -974,7 +980,7 @@ fn assign_job_object(pid: Option<u32>) -> Option<windows::Win32::Foundation::HAN
         let proc = OpenProcess(PROCESS_ALL_ACCESS, false, pid).ok()?;
         AssignProcessToJobObject(job, proc).ok()?;
         let _ = CloseHandle(proc);
-        Some(job)
+        Some(job.0 as usize)
     }
 }
 

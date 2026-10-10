@@ -40,6 +40,8 @@ jobs:
       - run: npm ci
         working-directory: frontend
       - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ inputs.version }}
           releaseName: "KouTube ${{ inputs.version }}"
