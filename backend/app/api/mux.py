@@ -64,18 +64,13 @@ def _progress(rid: str, **kw) -> None:
 
 @router.get("/mux-progress")
 async def mux_progress(rid: str):
+    # Unknown rid = server hasn't registered this request yet (the poller's
+    # leading tick races mux start). Answer 200 pending instead of 404 so
+    # browsers don't log console errors for a normal race.
     entry = _MUX_PROGRESS.get(rid)
     if not entry:
-        raise HTTPException(status_code=404, detail={
-            "code": "no-progress", "message": "unknown or expired request"})
-    return {"phase": entry.get("phase"), "loaded": entry.get("loaded"),
-            "total": entry.get("total"), "note": entry.get("note")}
-
-
-    entry = _MUX_PROGRESS.get(rid)
-    if not entry:
-        raise HTTPException(status_code=404, detail={
-            "code": "no-progress", "message": "unknown or expired request"})
+        return {"phase": "pending", "loaded": 0, "total": None,
+                "rate": None, "eta": None}
     return {"phase": entry.get("phase"), "loaded": entry.get("loaded"),
             "total": entry.get("total"), "rate": entry.get("rate"),
             "eta": entry.get("eta"), "note": entry.get("note")}

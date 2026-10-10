@@ -156,7 +156,7 @@ export async function downloadToDisk(
           phase?: string; loaded?: number | null; total?: number | null;
           rate?: number | null; eta?: number | null;
         };
-        if (!p || !p.phase || p.phase === 'ready' || p.phase === 'error') return;
+        if (!p || !p.phase || p.phase === 'ready' || p.phase === 'error' || p.phase === 'pending') return;
         const what = p.phase.startsWith('staging-') ? p.phase.slice(8) : p.phase;
         const have = p.loaded ?? 0;
         const of = p.total ? ` / ${fmtMB(p.total)}` : '';
