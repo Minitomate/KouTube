@@ -111,6 +111,22 @@ def collect_formats(info: dict) -> list[FormatInfo]:
 _AVATAR_CACHE: dict[str, str | None] = {}
 
 
+def pick_avatar(thumbnails: list[dict]) -> str | None:
+    """Priority: avatar_uncropped, avatar-ish id, non-banner google image."""
+    scored: list[tuple[int, str]] = []
+    for t in thumbnails or []:
+        url = t.get("url") or ""
+        tid = t.get("id") or ""
+        if tid == "avatar_uncropped" and url:
+            scored.append((0, url))
+        elif "avatar" in tid and url:
+            scored.append((1, url))
+        elif "googleusercontent" in url and "=w" not in url:
+            scored.append((2, url))
+    scored.sort(key=lambda p: p[0])
+    return scored[0][1] if scored else None
+
+
 def fetch_avatar(channel_url: str | None) -> str | None:
     """Best-effort channel avatar (avatar_uncropped), cached, 10s budget."""
     if not channel_url:
@@ -123,15 +139,7 @@ def fetch_avatar(channel_url: str | None) -> str | None:
                 "socket_timeout": 8}
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(channel_url, download=False) or {}
-        for t in info.get("thumbnails") or []:
-            if t.get("id") == "avatar_uncropped" and t.get("url"):
-                out = t["url"]
-                break
-        if out is None:
-            for t in info.get("thumbnails") or []:
-                if "googleusercontent" in (t.get("url") or ""):
-                    out = t["url"]
-                    break
+        out = pick_avatar(info.get("thumbnails") or [])
     except Exception:
         out = None
     _AVATAR_CACHE[channel_url] = out

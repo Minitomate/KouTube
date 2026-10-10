@@ -44,4 +44,10 @@ describe('avatarThumb', () => {
     expect(avatarThumb(undefined)).toBeUndefined();
     expect(avatarThumb('https://example.com/a.png')).toBe('https://example.com/a.png');
   });
+
+  it('appends sizing to parameterless google images', () => {
+    expect(avatarThumb('https://yt3.googleusercontent.com/abc123')).toBe(
+      'https://yt3.googleusercontent.com/abc123=s88',
+    );
+  });
 });

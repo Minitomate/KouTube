@@ -222,20 +222,29 @@ async fn fetch_avatar_inner(ytdlp: &std::path::Path, channel_url: &str) -> Optio
         return None;
     }
     let info: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    let thumbs = info.get("thumbnails")?.as_array()?;
-    thumbs
+    // Priority: exact avatar entry, then any avatar-ish (non-banner) google
+    // image. Banners (wide =w crops) must never become the "avatar".
+    let mut thumbs = info
+        .get("thumbnails")?
+        .as_array()?
         .iter()
-        .find(|t| t.get("id").and_then(|v| v.as_str()) == Some("avatar_uncropped"))
-        .or_else(|| {
-            thumbs.iter().find(|t| {
-                t.get("url")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|u| u.contains("googleusercontent"))
-            })
+        .filter_map(|t| {
+            let url = t.get("url")?.as_str()?;
+            let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let score = if id == "avatar_uncropped" {
+                0
+            } else if id.contains("avatar") {
+                1
+            } else if url.contains("googleusercontent") && !url.contains("=w") {
+                2
+            } else {
+                return None;
+            };
+            Some((score, url.to_string()))
         })
-        .and_then(|t| t.get("url"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+    thumbs.sort_by_key(|(score, _)| *score);
+    thumbs.into_iter().next().map(|(_, url)| url)
 }
 
 /// Log-safe URL: host + video id only, never tokens or full query strings.

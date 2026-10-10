@@ -40,10 +40,12 @@ export function fmtRelative(timestampSec?: number, nowMs: number = Date.now()): 
   return qty(Math.floor(diff / year), 'year');
 }
 
-/** Request a small avatar: rewrite YouTube =s0/=sNN sizing to =s88. */
+/** Request a small avatar: normalize YouTube sizing to =s88. */
 export function avatarThumb(url?: string): string | undefined {
   if (!url) return undefined;
-  return url.replace(/=s\d+(-c.*)?$/, '=s88');
+  if (/=s\d+/.test(url)) return url.replace(/=s\d+(-c.*)?$/, '=s88');
+  if (url.includes('googleusercontent')) return `${url}=s88`;
+  return url;
 }
 
 const PLAY_TRIANGLE = 'M8 5v14l11-7z';
