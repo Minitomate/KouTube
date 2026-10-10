@@ -352,19 +352,19 @@ fn randish() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    t ^ (std::process::id() as u128)
+    (t ^ (std::process::id() as u128)) as u64
 }
 
-async fn run_with_retries(app: &AppHandle, job_id: &str, spec: &DownloadSpec) {
+async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
     for attempt in 0..=MAX_RETRIES {
-        if is_cancelled(job_id).await {
+        if is_cancelled(&job_id).await {
             return;
         }
-        match run_once(app, job_id, spec, attempt).await {
+        match run_once(&app, &job_id, &spec, attempt).await {
             Ok(done_path) => {
                 set_status(
-                    app,
-                    job_id,
+                    &app,
+                    &job_id,
                     JobView {
                         status: "done".into(),
                         percent: 100.0,
@@ -376,13 +376,13 @@ async fn run_with_retries(app: &AppHandle, job_id: &str, spec: &DownloadSpec) {
                 return;
             }
             Err(e) => {
-                if is_cancelled(job_id).await {
+                if is_cancelled(&job_id).await {
                     return;
                 }
                 if attempt == MAX_RETRIES {
                     set_status(
-                        app,
-                        job_id,
+                        &app,
+                        &job_id,
                         JobView {
                             status: "error".into(),
                             error: Some(friendly_error(&e)),

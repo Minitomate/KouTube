@@ -70,10 +70,8 @@ fn exe(name: &str) -> String {
 
 fn path_in_path(name: &str) -> Option<PathBuf> {
     let probe = exe(name);
-    for dir in std::env::var_os("PATH")
-        .into_iter()
-        .flat_map(|p| std::env::split_paths(&p))
-    {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
         let cand = dir.join(&probe);
         if cand.is_file() {
             return Some(cand);

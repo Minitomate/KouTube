@@ -61,9 +61,9 @@ export async function startDesktopDownload(
     url: choice.url,
     container: choice.container === 'audio' ? 'mp3' : 'mp4',
     quality: choice.quality,
-    audioTrack: choice.audioTrack === 'original' ? null : choice.audioTrack,
+    audio_track: choice.audioTrack === 'original' ? null : choice.audioTrack,
     captions: choice.captions,
-    outDir,
+    out_dir: outDir,
   })) as string;
   const stop = await listen('dl://progress', (e) => {
     const p = e.payload as DesktopEvent;
@@ -74,7 +74,7 @@ export async function startDesktopDownload(
 
 export async function cancelDesktopDownload(jobId: string): Promise<void> {
   const { invoke } = await tauri();
-  await invoke('cancel_download', { jobId });
+  await invoke('cancel_download', { job_id: jobId });
 }
 
 export async function ensureDesktopTools(): Promise<void> {

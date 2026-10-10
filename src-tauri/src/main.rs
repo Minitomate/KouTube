@@ -10,7 +10,7 @@
 mod jobs;
 mod tools;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
 async fn resolve(app: AppHandle, url: String) -> Result<serde_json::Value, String> {
