@@ -214,7 +214,10 @@ async fn fetch_avatar_inner(ytdlp: &std::path::Path, channel_url: &str) -> Optio
     ])
     .stdout(Stdio::piped())
     .stderr(Stdio::null());
-    let out = tokio::time::timeout(Duration::from_secs(10), cmd.output()).await.ok()??;
+    let out = tokio::time::timeout(Duration::from_secs(10), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
     if !out.status.success() {
         return None;
     }
