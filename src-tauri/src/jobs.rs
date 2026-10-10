@@ -341,7 +341,7 @@ pub async fn start_download(app: &AppHandle, spec: DownloadSpec) -> Result<Strin
     let app2 = app.clone();
     let jid = job_id.clone();
     tauri::async_runtime::spawn(async move {
-        run_with_retries(&app2, &jid, &spec).await;
+        run_with_retries(app2, jid, spec).await;
     });
     Ok(job_id)
 }
@@ -394,8 +394,8 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                 }
                 let wait = 2u64.pow(attempt) as u64;
                 set_status(
-                    app,
-                    job_id,
+                    &app,
+                    &job_id,
                     JobView {
                         status: "retrying".into(),
                         error: Some(format!(
