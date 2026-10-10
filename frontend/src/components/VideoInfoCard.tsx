@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { MediaInfo } from '../lib/api';
 
 export function fmtCount(n?: number | null): string {
@@ -58,6 +58,22 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   const [thumbLoaded, setThumbLoaded] = useState(false);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
+  // Images mount only once the browser is idle: text paints first, images
+  // always load last (fetchPriority is React-19-only; this works on 18).
+  const [idle, setIdle] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    }).requestIdleCallback;
+    if (ric) {
+      const id = ric(() => setIdle(true), { timeout: 1500 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const t = setTimeout(() => setIdle(true), 0);
+    return () => clearTimeout(t);
+  }, []);
   const initial = (media.channel ?? media.title).trim().charAt(0).toUpperCase() || '▶';
   const rel = fmtRelative(media.timestamp) || (media.uploadDate ? fmtDate(media.uploadDate) : '');
   const exact = fmtDate(media.uploadDate);
@@ -68,9 +84,9 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
     <div className="card">
       <div className="thumb-wrap">
         {!thumbLoaded && <div className="sk sk-fill" aria-hidden="true" />}
-        {media.thumbnail && (
+        {idle && media.thumbnail && (
           <img
-            src={media.thumbnail} alt="" loading="lazy" fetchPriority="low"
+            src={media.thumbnail} alt="" loading="lazy"
             decoding="async" className={thumbLoaded ? 'img-ready' : 'img-waiting'}
             onLoad={() => setThumbLoaded(true)}
           />
@@ -91,12 +107,14 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
           {avatar ? (
             <>
               {!avatarLoaded && <span className="sk sk-avatar" aria-hidden="true" />}
+              {idle && (
               <img
                 className={`avatar${avatarLoaded ? '' : ' img-hidden'}`} src={avatar} alt=""
-                loading="lazy" fetchPriority="low" decoding="async"
+                loading="lazy" decoding="async"
                 onLoad={() => setAvatarLoaded(true)}
                 onError={() => setAvatarFailed(true)}
               />
+              )}
             </>
           ) : (
             <span className="avatar avatar-fallback" aria-hidden="true">{initial}</span>

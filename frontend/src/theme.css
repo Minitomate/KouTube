@@ -91,6 +91,8 @@ body {
 .pill-btn.filled { background: var(--primary); color: var(--on-primary); }
 .pill-btn.tonal { background: var(--secondary-container); color: var(--on-secondary-container); }
 .pill-btn.outlined { background: transparent; border: 1px solid var(--outline); color: var(--on-surface); }
+.pill-btn.text { background: transparent; border: 0; color: var(--primary); min-height: 40px; padding: 0 12px; }
+.pill-btn.text:hover { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .pill-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .urlbar { display: flex; gap: 8px; flex-wrap: wrap; }

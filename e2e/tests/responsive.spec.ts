@@ -47,6 +47,19 @@ test.describe('theme modes', () => {
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
     expect(results.violations).toEqual([]);
   });
+
+  test('text buttons are transparent in dark mode', async ({ page }) => {
+    await page.route('**/api/resolve', (r) =>
+      r.fulfill({ json: { ...manualOnly, description: 'A test description.' } }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    const btn = page.getByRole('button', { name: /more|less/i });
+    await expect(btn).toBeVisible();
+    // Must be transparent (themed), never the browser default light face.
+    await expect(btn).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  });
 });
 
 test.describe('theme modes light', () => {

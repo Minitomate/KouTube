@@ -49,6 +49,16 @@ test.describe('inspect + options UI', () => {
     expect(results.violations).toEqual([]);
   });
 
+  test('images mount after idle behind skeletons', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    // Text paints first; imagery follows once the browser is idle.
+    await expect(page.getByRole('heading', { name: 'Manual captions fixture' })).toBeVisible();
+    await expect(page.locator('.thumb-wrap img')).toHaveCount(1, { timeout: 10_000 });
+  });
+
   test('info card visual snapshot', async ({ page }) => {
     await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
     const app = new KouTubePage(page);
