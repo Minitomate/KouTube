@@ -472,8 +472,9 @@ async fn run_once(
     unsafe {
         // Own session → the whole tree (yt-dlp + forked ffmpeg) dies on killpg.
         cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
+            nix::unistd::setsid()
+                .map(|_| ())
+                .map_err(std::io::Error::from)
         });
     }
     let mut child = cmd.spawn()?;
@@ -611,8 +612,10 @@ async fn kill_tree(job_id: &str) {
     let pid = jobs().lock().await.get(job_id).and_then(|h| h.child_pid);
     let Some(pid) = pid else { return };
     #[cfg(unix)]
-    unsafe {
-        libc::killpg(pid as i32, libc::SIGKILL);
+    {
+        use nix::sys::signal::{killpg, Signal};
+        use nix::unistd::Pid;
+        let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
     }
     #[cfg(windows)]
     {

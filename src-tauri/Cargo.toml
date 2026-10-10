@@ -17,7 +17,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "fs", "io-util"] }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "stream"] }
-libc = "1"
+nix = { version = "0.29", features = ["process", "signal", "fs"] }
 anyhow = "1"
 zip = "2"
 tar = "0.4"
