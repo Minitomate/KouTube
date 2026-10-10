@@ -57,6 +57,8 @@ export interface FetchOpts {
   requestId?: string;
   /** Stage transitions: 'fetching' on first byte, 'finalizing' past estimate. */
   onStage?: (stage: 'fetching' | 'finalizing', note?: string) => void;
+  /** Server-side staging ticks (pre-first-byte): drive bar + note from them. */
+  onServerProgress?: (loaded: number, total: number | null, note: string) => void;
 }
 
 class StallError extends Error {}
@@ -78,6 +80,21 @@ function totalFrom206(res: Response): number | null {
   const cr = res.headers.get('content-range'); // bytes 0-99/3449447
   const m = cr && /\/(\d+)\s*$/.exec(cr);
   return m ? Number(m[1]) : null;
+}
+
+function fmtMB(n: number): string {
+  return `${(n / 1048576).toFixed(n >= 104857600 ? 0 : 1)} MB`;
+}
+
+function fmtRate(bps: number): string {
+  return bps >= 1048576 ? `${(bps / 1048576).toFixed(1)} MB/s` : `${Math.max(1, Math.round(bps / 1024))} KB/s`;
+}
+
+function fmtETA(s: number): string {
+  if (!isFinite(s) || s < 0) return '';
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
 export async function downloadToDisk(
@@ -131,20 +148,29 @@ export async function downloadToDisk(
   };
   if (opts?.requestId) {
     const rid = opts.requestId;
-    serverPoll = setInterval(async () => {
+    const tick = async () => {
       try {
         const r = await fetch(`/api/mux-progress?rid=${encodeURIComponent(rid)}`);
         if (!r.ok) return;
         const p = (await r.json()) as {
           phase?: string; loaded?: number | null; total?: number | null;
+          rate?: number | null; eta?: number | null;
         };
         if (!p || !p.phase || p.phase === 'ready' || p.phase === 'error') return;
-        const bit = p.phase.startsWith('staging-')
-          ? `Staging ${p.phase.slice(8)}` + (p.total ? ` ${Math.min(99, Math.round(((p.loaded ?? 0) / p.total) * 100))}%` : '')
-          : 'Merging…';
-        onStage?.('fetching', `server: ${bit}`);
+        const what = p.phase.startsWith('staging-') ? p.phase.slice(8) : p.phase;
+        const have = p.loaded ?? 0;
+        const of = p.total ? ` / ${fmtMB(p.total)}` : '';
+        const rate = p.rate ? ` · ${fmtRate(p.rate)}` : '';
+        const eta = p.eta != null ? ` · ${fmtETA(p.eta)} left` : '';
+        const note = p.phase === 'muxing'
+          ? 'Merging on server…'
+          : `Staging ${what} · ${fmtMB(have)}${of}${rate}${eta}`;
+        onStage?.('fetching', `server: ${note}`);
+        opts.onServerProgress?.(have, p.total ?? null, note);
       } catch { /* poller is best-effort only */ }
-    }, 1000);
+    };
+    void tick(); // leading edge: don't wait a full interval for the first note
+    serverPoll = setInterval(tick, 1000);
   }
   try {
   for (;;) {

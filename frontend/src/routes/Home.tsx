@@ -39,7 +39,14 @@ export default function Home() {
       upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching', rid });
       await downloadToDisk(transferUrl(p), p.filename, p.sizeEstimate,
         (loaded, total) => upsertTransfer({ id, title: p.filename, loaded, total, status: 'working', stage: 'fetching', rid }),
-        ctl.signal, { requestId: rid, onStage: stage });
+        ctl.signal, { requestId: rid, onStage: stage,
+          onServerProgress: (sLoaded, sTotal, note) => {
+            const cur = useStore.getState().queue.find((q) => q.id === id);
+            // Only drive the bar pre-first-byte; real bytes take over after.
+            if (cur && cur.status === 'working' && cur.loaded === 0) {
+              upsertTransfer({ ...cur, loaded: sLoaded, total: sTotal, note });
+            }
+          } });
       upsertTransfer({ id, title: p.filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done', stage: 'end', rid });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {

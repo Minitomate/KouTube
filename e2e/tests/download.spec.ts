@@ -123,7 +123,9 @@ test.describe('stall recovery (user-end)', () => {
     );
     const muxHit: string[] = [];
     await page.route('**/api/mux*', (r) => {
-      muxHit.push(r.request().url());
+      // The pre-first-byte progress poller hits a mux* URL too; only count
+      // real downloads (token=), not progress polls (rid=).
+      if (r.request().url().includes('token=')) muxHit.push(r.request().url());
       return r.fulfill({ status: 200, body: 'muxed-bytes!', contentType: 'video/mp4' });
     });
     const app = new KouTubePage(page);
@@ -158,5 +160,38 @@ test.describe('stall recovery (user-end)', () => {
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+  });
+
+  test('staging numbers surface rate and ETA', async ({ page }) => {
+    await mockResolve(page);
+    await page.route('**/api/prepare', (r) =>
+      r.fulfill({
+        json: {
+          filename: 'stage.mp4', container: 'mp4', mergeRequired: true,
+          sizeEstimate: 200, streamToken: 's', muxToken: 'm', captions: [],
+        },
+      }),
+    );
+    // NOTE: **/api/mux* is registered first: it also matches the progress
+    // path, and last-registered wins, so mux-progress must come last.
+    // First byte delayed so the poller fires.
+    await page.route('**/api/mux*', async (r) => {
+      await new Promise((s) => setTimeout(s, 2500));
+      await r.fulfill({ status: 200, body: 'x', contentType: 'video/mp4' });
+    });
+    await page.route('**/api/mux-progress*', (r) =>
+      r.fulfill({
+        json: { phase: 'staging-video', loaded: 100, total: 200,
+                rate: 8388608, eta: 75 },
+      }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickQuality('best');
+    await app.download();
+    await expect(page.getByText(/8\.0 MB\/s/).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/1m 15s/).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
   });
 });
