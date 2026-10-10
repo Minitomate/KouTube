@@ -30,13 +30,14 @@ UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 _MUX_PROGRESS: dict[str, dict] = {}
 _PROGRESS_TTL = 15 * 60
 
-# Adaptive segmented staging: 8MB segments, start with 4 workers, scale to 8
-# when per-segment throughput stays healthy, back off on 403/429.
+# Adaptive segmented staging: 8MB segments, start with 2 workers, scale to 4
+# when per-segment throughput stays healthy, back off on 403/429. Measured:
+# many concurrent full-speed streams get stalled upstream, so stay gentle.
 SEGMENT_BYTES = 8 * 1024 * 1024
-MIN_WORKERS = 4
-MAX_WORKERS = 8
-# Healthy = median segment faster than this (8MB in 5s ~= 1.6MB/s per socket).
-HEALTHY_SEGMENT_S = 5.0
+MIN_WORKERS = 2
+MAX_WORKERS = 4
+# Healthy = median segment faster than this (8MB in 8s ~= 1MB/s per socket).
+HEALTHY_SEGMENT_S = 8.0
 RATE_WINDOW_S = 3.0
 
 
@@ -106,17 +107,18 @@ class _Rate:
 async def _fetch_segment(client: httpx.AsyncClient, url: str, fd: int,
                          start: int, end: int, rid: str, what: str,
                          seg_idx: int) -> float:
-    """Fetch one byte segment with retries; returns seconds taken.
+    """Fetch one byte segment, resuming within the segment on stalls.
 
-    Raises ValueError (fail-fast input) or httpx.HTTPStatusError on 403/429
-    so the caller can back off.
+    Returns seconds taken. Raises ValueError (fail-fast input) or
+    httpx.HTTPStatusError on 403/429 so the caller can back off.
     """
     import time
+    t0 = time.monotonic()
+    off = start
     last: Exception | None = None
-    for attempt in range(3):
-        t0 = time.monotonic()
+    for attempt in range(5):
         try:
-            headers = {**UA, "Range": f"bytes={start}-{end}"}
+            headers = {**UA, "Range": f"bytes={off}-{end}"}
             async with client.stream("GET", url, headers=headers) as r:
                 if r.status_code in (403, 429):
                     raise httpx.HTTPStatusError(
@@ -124,7 +126,6 @@ async def _fetch_segment(client: httpx.AsyncClient, url: str, fd: int,
                         response=r.response)
                 if r.status_code not in (200, 206):
                     raise ValueError(f"upstream status {r.status_code}")
-                off = start
                 async for chunk in r.aiter_bytes(CHUNK):
                     os.pwrite(fd, chunk, off)
                     off += len(chunk)
@@ -133,10 +134,12 @@ async def _fetch_segment(client: httpx.AsyncClient, url: str, fd: int,
                 return time.monotonic() - t0
         except httpx.HTTPStatusError:
             raise
-        except (httpx.RequestError, ValueError) as exc:
+        except (httpx.RequestError, ValueError, OSError) as exc:
             last = exc
+            log.warning("mux segment retry", rid=rid, what=what, seg=seg_idx,
+                        off=off, attempt=attempt, error=repr(exc)[:200])
             await asyncio.sleep(1 + attempt)
-    raise ValueError(f"segment {seg_idx} failed: {last}")
+    raise ValueError(f"segment {seg_idx} failed: {last!r}")
 
 
 async def _stage_url(client: httpx.AsyncClient, url: str, dest: str, rid: str,
@@ -319,8 +322,11 @@ async def mux(token: str, request: Request):
         # Direct-HTTP inputs are staged with ranged requests (full speed);
         # manifest inputs (HLS/DASH) are left for ffmpeg to fetch itself.
         vinput, ainput = vurl, aurl
+        limits = httpx.Limits(max_connections=MAX_WORKERS + 2,
+                              max_keepalive_connections=MAX_WORKERS + 2)
         async with httpx.AsyncClient(
-                timeout=httpx.Timeout(30.0, read=60.0)) as client:
+                timeout=httpx.Timeout(30.0, read=60.0),
+                limits=limits) as client:
             if data.get("vd", True):
                 await _stage_url(client, vurl, vpath, rid, "video")
                 vinput = vpath
