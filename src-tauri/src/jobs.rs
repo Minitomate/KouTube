@@ -358,6 +358,7 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
         "subscribers": info.get("channel_follower_count"),
         "views": info.get("view_count"),
         "uploadDate": info.get("upload_date").or_else(|| info.get("release_date")),
+        "timestamp": info.get("timestamp").or_else(|| info.get("release_timestamp")),
         "avatarUrl": avatar,
         "formats": out_formats, "audioTracks": tracks, "manualCaptions": caps,
         "is_playlist": false, "entries": [],

@@ -51,6 +51,7 @@ class ResolveResponse(BaseModel):
     subscribers: int | None = None
     views: int | None = None
     uploadDate: str | None = None
+    timestamp: int | None = None
     avatarUrl: str | None = None
     formats: list[FormatInfo] = Field(default_factory=list)
     audioTracks: list[AudioTrack] = Field(default_factory=list)

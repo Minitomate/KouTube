@@ -20,6 +20,26 @@ export function fmtDate(yyyymmdd?: string): string {
   return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
 }
 
+/** YouTube-style relative time ("2 hours ago"); falls back to the date. */
+export function fmtRelative(timestampSec?: number, nowMs: number = Date.now()): string {
+  if (!timestampSec) return '';
+  const diff = Math.max(0, nowMs / 1000 - timestampSec);
+  const minute = 60;
+  const hour = 3600;
+  const day = 86400;
+  const month = 30 * day;
+  const year = 365 * day;
+  const qty = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+  if (diff < hour) {
+    const m = Math.max(1, Math.floor(diff / minute));
+    return qty(m, 'minute');
+  }
+  if (diff < day) return qty(Math.floor(diff / hour), 'hour');
+  if (diff < month) return qty(Math.floor(diff / day), 'day');
+  if (diff < year) return qty(Math.floor(diff / month), 'month');
+  return qty(Math.floor(diff / year), 'year');
+}
+
 /** Request a small avatar: rewrite YouTube =s0/=sNN sizing to =s88. */
 export function avatarThumb(url?: string): string | undefined {
   if (!url) return undefined;
@@ -35,7 +55,9 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
   const initial = (media.channel ?? media.title).trim().charAt(0).toUpperCase() || '▶';
-  const meta = [media.views != null ? `${fmtCount(media.views)} views` : '', fmtDate(media.uploadDate)]
+  const rel = fmtRelative(media.timestamp) || (media.uploadDate ? fmtDate(media.uploadDate) : '');
+  const exact = fmtDate(media.uploadDate);
+  const meta = [media.views != null ? `${fmtCount(media.views)} views` : '', rel]
     .filter(Boolean).join(' • ');
   const avatar = !avatarFailed ? avatarThumb(media.avatarUrl) : undefined;
   return (
@@ -81,12 +103,20 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
       {media.description && (
         <div>
           <button
-            className="pill-btn text" aria-expanded={descOpen}
+            className="pill-btn text desc-toggle" aria-expanded={descOpen}
             onClick={() => setDescOpen((v) => !v)}
           >
-            {descOpen ? 'Hide description' : 'Show description'}
+            {descOpen ? 'Show less' : '...more'}
           </button>
-          {descOpen && <p className="desc">{media.description.slice(0, 2000)}</p>}
+          {descOpen && (
+            <div className="desc-box">
+              <div className="desc-head">
+                {[media.views != null ? `${fmtCount(media.views)} views` : '', rel, exact && exact !== rel ? exact : '']
+                  .filter(Boolean).join(' • ')}
+              </div>
+              <p className="desc">{media.description.slice(0, 2000)}</p>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -15,10 +15,12 @@
   --pill-h: 52px;
   --radius-pill: 999px;
   --radius-card: 24px;
+  color-scheme: light;
 }
 
 :root,
 [data-theme='light'] {
+  color-scheme: light;
   --primary: #6750a4;
   --on-primary: #ffffff;
   --primary-container: #eaddff;
@@ -36,6 +38,7 @@
 }
 
 [data-theme='dark'] {
+  color-scheme: dark;
   --primary: #d0bcff;
   --on-primary: #381e72;
   --primary-container: #4f378b;
@@ -120,6 +123,13 @@ body {
   border-radius: var(--radius-pill); min-height: 48px; padding: 0 18px;
   border: 1px solid var(--outline); background: var(--surface); color: var(--on-surface); font-size: 14px;
 }
+.select-pill option { background: var(--surface); color: var(--on-surface); }
+.desc-toggle { margin-top: 12px; }
+.desc-box {
+  margin-top: 10px; background: var(--surface-container-high);
+  border-radius: 12px; padding: 10px 12px; font-size: 13px;
+}
+.desc-box .desc-head { font-weight: 600; margin-bottom: 6px; }
 
 .progress-pill { background: var(--surface-container-high); border-radius: var(--radius-pill); height: 20px; overflow: hidden; }
 .progress-pill > div { height: 100%; background: var(--primary); border-radius: var(--radius-pill); transition: width 0.2s; }

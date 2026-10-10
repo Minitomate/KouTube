@@ -147,6 +147,7 @@ def channel_fields(info: dict) -> dict:
         "subscribers": info.get("channel_follower_count"),
         "views": info.get("view_count"),
         "uploadDate": info.get("upload_date") or info.get("release_date"),
+        "timestamp": info.get("timestamp") or info.get("release_timestamp"),
     }
 
 
