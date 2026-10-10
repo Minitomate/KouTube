@@ -33,10 +33,19 @@ interface State {
   audioTrack: string;
   captions: string[];
   queue: Transfer[];
-  theme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'auto';
   set: (p: Partial<State>) => void;
   toggleCaption: (id: string) => void;
   upsertTransfer: (t: Transfer) => void;
+}
+
+export type Theme = 'light' | 'dark' | 'auto';
+
+/** Effective theme: explicit choice, or OS preference in auto mode. */
+export function resolveTheme(stored: Theme, systemDark: boolean): 'light' | 'dark' {
+  if (stored === 'light') return 'light';
+  if (stored === 'dark') return 'dark';
+  return systemDark ? 'dark' : 'light';
 }
 
 const QUALITIES = ['360', '720', '1080', '1440', '2160', '4320', 'best'];
@@ -53,7 +62,7 @@ export const useStore = create<State>((set) => ({
   audioTrack: 'original',
   captions: [],
   queue: [],
-  theme: 'light',
+  theme: 'auto',
   set: (p) => set(p),
   toggleCaption: (id) =>
     set((s) => ({

@@ -10,9 +10,15 @@
  *      are already 1:1 with M3 naming so migration is mechanical.
  */
 
+:root {
+  --seed: #6750A4;
+  --pill-h: 52px;
+  --radius-pill: 999px;
+  --radius-card: 24px;
+}
+
 :root,
 [data-theme='light'] {
-  --seed: #6750a4;
   --primary: #6750a4;
   --on-primary: #ffffff;
   --primary-container: #eaddff;
@@ -27,9 +33,6 @@
   --outline-variant: #cac4d0;
   --error: #b3261e;
   --bg: #fef7ff;
-  --pill-h: 52px;
-  --radius-pill: 999px;
-  --radius-card: 24px;
 }
 
 [data-theme='dark'] {
@@ -157,4 +160,15 @@ fieldset.field { border: 0; padding: 0; }
 @media (prefers-reduced-motion: reduce) {
   .sk { animation: none; }
   .progress-pill > div { transition: none; }
+  .pill-btn, .chip, .segmented button,
+  body, .card, .urlbar input, .select-pill { transition: none; }
+  .pill-btn:active:not(:disabled), .chip:active, .segmented button:active { transform: none; }
 }
+
+.meta-row { display: inline-flex; gap: 5px; align-items: center; }
+.verified-mark { color: var(--outline); vertical-align: -2px; margin-left: 4px; flex: none; }
+
+/* Motion: press states, theme cross-fade. */
+.pill-btn, .chip, .segmented button { transition: transform 0.12s ease, background-color 0.2s ease, box-shadow 0.2s ease; }
+.pill-btn:active:not(:disabled), .chip:active, .segmented button:active { transform: scale(0.97); }
+body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease; }

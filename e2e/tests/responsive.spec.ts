@@ -38,6 +38,46 @@ test.describe('responsive low-res', () => {
   });
 });
 
+test.describe('theme modes', () => {
+  test.use({ colorScheme: 'dark' });
+
+  test('auto follows OS dark + axe passes dark', async ({ page }) => {
+    await inspected(page);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(results.violations).toEqual([]);
+  });
+});
+
+test.describe('theme modes light', () => {
+  test.use({ colorScheme: 'light' });
+
+  test('auto follows OS light', async ({ page }) => {
+    await inspected(page);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  });
+});
+
+test.describe('reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+
+  test('skeleton animation disabled', async ({ page }) => {
+    await page.route('**/api/resolve', async (r) => {
+      await new Promise((s) => setTimeout(s, 400));
+      await r.fulfill({ json: manualOnly });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.pasteUrl(URL);
+    const inspect = app.inspect();
+    const sk = page.locator('.sk').first();
+    await expect(sk).toBeVisible();
+    await expect(sk).toHaveCSS('animation-name', 'none');
+    await inspect;
+  });
+});
+  test.use({ viewport: { width: 768, height: 1024 } });
+
 test.describe('responsive tablet', () => {
   test.use({ viewport: { width: 768, height: 1024 } });
 
