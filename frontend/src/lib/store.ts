@@ -8,6 +8,17 @@ export interface Transfer {
   id: string; title: string; loaded: number; total: number | null;
   status: TransferStatus; error?: string;
   stage: TransferStage; note?: string; rid?: string;
+  /** Newest-last stage log (desktop flow); cap 30. Absent on older cards. */
+  log?: string[];
+}
+
+export function blankTransfer(id: string, title: string): Transfer {
+  return { id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', log: [] };
+}
+
+export function tlog(t: Transfer, line: string): Transfer {
+  const stamp = new Date().toISOString().slice(11, 19);
+  return { ...t, log: [...(t.log ?? []).slice(-29), `${stamp} ${line}`] };
 }
 
 interface State {

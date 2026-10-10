@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react';
-import { useStore } from '../lib/store';
+import { useStore, blankTransfer, tlog, type Transfer } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip } from '../lib/transfer';
-import { isTauri, pickFolder, startDesktopDownload, ensureDesktopTools } from '../lib/desktop';
+import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs } from '../lib/desktop';
 import UrlBar from '../components/UrlBar';
 import FormatPicker from '../components/FormatPicker';
 import QualityPicker from '../components/QualityPicker';
@@ -15,7 +15,7 @@ import ThemeToggle from '../components/ThemeToggle';
 const ZIP_CAP = 10;
 
 export default function Home() {
-  const { url, media, format, quality, audioTrack, captions, set, upsertTransfer } = useStore();
+  const { url, media, format, quality, audioTrack, captions, set, upsertTransfer, queue } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
@@ -73,7 +73,14 @@ export default function Home() {
     if (!url) { setError('Paste a YouTube URL first.'); return; }
     setError('');
     setWarn('');
-    if (isTauri()) { await downloadDesktop(); return; }
+    if (isTauri()) {
+      try {
+        await downloadDesktop();
+      } catch (e) {
+        fail(e instanceof Error ? e.message : 'Download failed');
+      }
+      return;
+    }
     setBusy(true);
     try {
       if (media?.isPlaylist && media.entries?.length) {
@@ -126,6 +133,29 @@ export default function Home() {
     }
   }
 
+  async function copyDebugLog() {
+    try {
+      const lines: string[] = [];
+      for (const q of queue) {
+        lines.push(`## ${q.title} [${q.status}/${q.stage}]`);
+        for (const l of q.log ?? []) lines.push(`  ${l}`);
+        if (q.error) lines.push(`  error: ${q.error}`);
+      }
+      if (isTauri()) {
+        try {
+          const recent = await getRecentLogs();
+          lines.push('## backend recent');
+          for (const l of recent.slice(-40)) lines.push(`  ${l}`);
+        } catch { /* frontend log alone still helps */ }
+      }
+      const text = lines.join('\n') || '(empty log)';
+      await navigator.clipboard.writeText(text);
+      setWarn('Debug log copied — paste it in your report.');
+    } catch {
+      setError('Could not copy the debug log.');
+    }
+  }
+
   function cancel() {
     abortRef.current?.abort();
     batchCancelled.current = true;
@@ -145,50 +175,50 @@ export default function Home() {
     outDir: string,
     transferId: string,
   ): Promise<void> {
-    upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'working', stage: 'preparing' });
+    const put = (t: Parameters<typeof upsertTransfer>[0]) => upsertTransfer(tlog(t, t.stage));
+    put({ ...blankTransfer(transferId, title), note: 'folder ok, starting' });
     // Resolves only on terminal events so playlist items run sequentially.
     let stopFn = () => {};
     const resolveRef: { current: null | (() => void) } = { current: null };
     const done = new Promise<void>((resolve) => { resolveRef.current = resolve; });
+    const finish = (t: Transfer, line: string) => {
+      const cur = useStore.getState().queue.find((q) => q.id === transferId);
+      upsertTransfer(tlog({ ...(cur ?? blankTransfer(transferId, title)), ...t }, line));
+      desktopJobs.current.delete(transferId);
+      if (!desktopJobs.current.size) setCanCancel(false);
+      setBusy(false);
+      stopFn(); resolveRef.current?.();
+    };
     startDesktopDownload(
       { url: pageUrl, container: format, quality, audioTrack, captions },
       outDir,
       (e) => {
         if (e.status === 'done') {
-          upsertTransfer({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end' });
-          desktopJobs.current.delete(transferId);
-          if (!desktopJobs.current.size) setCanCancel(false);
-          setBusy(false);
-          stopFn(); resolveRef.current?.();
+          finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end' }, 'event: done');
         } else if (e.status === 'error') {
-          upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' });
-          desktopJobs.current.delete(transferId);
-          if (!desktopJobs.current.size) setCanCancel(false);
-          setBusy(false);
-          stopFn(); resolveRef.current?.();
+          finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' }, `event: error ${e.error ?? ''}`);
         } else if (e.status === 'cancelled') {
-          upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' });
-          desktopJobs.current.delete(transferId);
-          if (!desktopJobs.current.size) setCanCancel(false);
-          setBusy(false);
-          stopFn(); resolveRef.current?.();
+          finish({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' }, 'event: cancelled');
         } else {
-          upsertTransfer({
+          const cur = useStore.getState().queue.find((q) => q.id === transferId);
+          const liveStage = e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching';
+          const base = {
             id: transferId, title: e.title ?? title, loaded: e.percent, total: 100,
-            status: 'working',
-            stage: e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching',
+            status: 'working' as const,
+            stage: liveStage as 'fetching' | 'finalizing',
             note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? ''].filter(Boolean).join(' · ') || undefined,
-          });
+          };
+          upsertTransfer(cur ? { ...cur, ...base } : { ...blankTransfer(transferId, title), ...base });
         }
       },
     ).then(({ jobId, stop }) => {
       stopFn = stop;
       desktopJobs.current.set(transferId, jobId);
       setCanCancel(true);
+      const cur = useStore.getState().queue.find((q) => q.id === transferId);
+      if (cur) upsertTransfer(tlog(cur, `invoke ok job=${jobId}, listener ok`));
     }).catch((err) => {
-      upsertTransfer({ id: transferId, title, loaded: 0, total: null, status: 'error', error: err instanceof Error ? err.message : 'failed', stage: 'end' });
-      setBusy(false);
-      resolveRef.current?.();
+      finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: err instanceof Error ? err.message : 'failed', stage: 'end' }, `invoke/listener failed: ${err instanceof Error ? err.message : err}`);
     });
     await done;
   }
@@ -202,9 +232,13 @@ export default function Home() {
         : 'Setup failed. Check your connection and retry.');
       return;
     }
-    const outDir = localStorage.getItem('koutube-outdir') || await pickFolder();
-    if (!outDir || Array.isArray(outDir)) return;
-    localStorage.setItem('koutube-outdir', outDir);
+    let outDir: string;
+    try {
+      outDir = await resolveOutDir();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No folder selected');
+      return;
+    }
     setBusy(true);
     batchCancelled.current = false;
     try {
@@ -253,6 +287,11 @@ export default function Home() {
       <AudioPicker />
       <CaptionsPicker />
       <QueueView />
+      {isTauri() && queue.length > 0 && (
+        <button className="pill-btn tonal" onClick={copyDebugLog} aria-label="Copy debug log">
+          Copy debug log
+        </button>
+      )}
       <div className="field-error" role="alert">{error}</div>
       {warn && <div className="meta" role="note">{warn}</div>}
       <div className="sticky-cta">

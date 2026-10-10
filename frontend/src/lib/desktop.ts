@@ -51,6 +51,28 @@ export async function pickFolder(): Promise<string | null> {
   return dialog.open({ directory: true, multiple: false });
 }
 
+/** Folder resolution with loud errors: never silent, never stuck-busy. */
+export async function resolveOutDir(): Promise<string> {
+  const cached = localStorage.getItem('koutube-outdir');
+  if (cached) return cached;
+  let picked: string | string[] | null;
+  try {
+    picked = await pickFolder();
+  } catch (e) {
+    throw new Error(e instanceof Error
+      ? `folder picker failed: ${e.message}`
+      : 'folder picker failed');
+  }
+  if (!picked || Array.isArray(picked)) throw new Error('No folder selected');
+  localStorage.setItem('koutube-outdir', picked);
+  return picked;
+}
+
+export async function getRecentLogs(): Promise<string[]> {
+  const { invoke } = await tauri();
+  return invoke('get_recent_logs') as Promise<string[]>;
+}
+
 export async function startDesktopDownload(
   choice: DesktopChoice,
   outDir: string,

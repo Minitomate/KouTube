@@ -59,6 +59,33 @@ fn jobs() -> Jobs {
         .clone()
 }
 
+/// Capped in-memory log ring (last 200 lines) backing `get_recent_logs`.
+/// Everything here also goes to stderr, so `cargo tauri dev` shows it live.
+fn logs() -> Arc<Mutex<Vec<String>>> {
+    use std::sync::OnceLock;
+    static CELL: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
+    CELL.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .clone()
+}
+
+pub(crate) fn blog(line: String) {
+    eprintln!("[koutube] {line}");
+    if let Ok(rt) = tokio::runtime::Handle::try_current() {
+        rt.spawn(async move {
+            let mut guard = logs().lock().await;
+            guard.push(line);
+            if guard.len() > 200 {
+                let excess = guard.len() - 200;
+                guard.drain(..excess);
+            }
+        });
+    }
+}
+
+pub async fn recent_logs() -> Vec<String> {
+    logs().lock().await.clone()
+}
+
 fn emit_progress(app: &AppHandle, job_id: &str, view: &JobView) {
     let _ = app.emit(
         "dl://progress",
@@ -111,6 +138,7 @@ fn is_playlist_url(url: &str) -> bool {
 }
 
 pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
+    blog(format!("resolve start url={}", short_url(url)));
     let (ytdlp, _) = tools::resolve_tool(app, "yt-dlp")
         .ok_or_else(|| anyhow!("yt-dlp missing: run setup first"))?;
     validate_url(url)?;
@@ -123,12 +151,27 @@ pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
         cmd.arg("--no-playlist");
     }
     cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::null());
-    let out = cmd.output().await?;
+    let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
+        .await
+        .map_err(|_| anyhow!("resolve timed out after 60s"))??;
     if !out.status.success() {
+        blog(format!("resolve failed url={}", short_url(url)));
         return Err(anyhow!("resolve failed"));
     }
     let info: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    blog(format!("resolve ok url={}", short_url(url)));
     Ok(build_resolve_payload(&info))
+}
+
+/// Log-safe URL: host + video id only, never tokens or full query strings.
+fn short_url(url: &str) -> String {
+    let id = url
+        .split("v=")
+        .nth(1)
+        .and_then(|s| s.split('&').next())
+        .unwrap_or("?");
+    let host = url.split('/').nth(2).unwrap_or("?");
+    format!("{host} v={id}")
 }
 
 fn validate_url(url: &str) -> Result<String> {
@@ -319,6 +362,11 @@ pub async fn start_download(app: &AppHandle, spec: DownloadSpec) -> Result<Strin
     validate_url(&spec.url)?;
     std::fs::create_dir_all(&spec.out_dir).map_err(|e| anyhow!("bad folder: {e}"))?;
     let job_id = format!("{:x}", randish());
+    blog(format!(
+        "download start job={job_id} url={} container={}",
+        short_url(&spec.url),
+        spec.container
+    ));
     {
         let map = jobs();
         let mut guard = map.lock().await;
@@ -402,6 +450,10 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                     return;
                 }
                 let wait = 2u64.pow(attempt) as u64;
+                blog(format!(
+                    "retry job={job_id} attempt={} wait={wait}s",
+                    attempt + 1
+                ));
                 set_status(
                     &app,
                     &job_id,
@@ -488,6 +540,9 @@ async fn run_once(
     }
     let mut child = cmd.spawn()?;
     let pid = child.id();
+    blog(format!(
+        "spawned job={job_id} pid={pid:?} attempt={attempt}"
+    ));
     #[cfg(windows)]
     let job_object = assign_job_object(pid);
     {
@@ -529,6 +584,7 @@ async fn run_once(
                 let quiet = last_out.elapsed() > IDLE_TIMEOUT;
                 let merge_quiet = { *last_io.lock().await }.elapsed() > Duration::from_secs(120);
                 if (quiet && !merging) || (merging && merge_quiet) {
+                    blog(format!("watchdog kill job={job_id} merging={merging}"));
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
                     return Err(anyhow!("stalled: no progress (merging heartbeat lost)"));
@@ -591,6 +647,7 @@ async fn run_once(
                     )
                     .await;
                 } else if l.starts_with("ERROR") {
+                    blog(format!("yt-dlp error job={job_id} line={l}"));
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
                     return Err(anyhow!("{l}"));
@@ -609,7 +666,11 @@ async fn run_once(
     }
     let status = child.wait().await?;
     if !status.success() {
+        blog(format!("yt-dlp exit job={job_id} status={status}"));
         return Err(anyhow!("yt-dlp exited with {status}"));
+    }
+    if let Some(ref p) = final_path {
+        blog(format!("download done job={job_id} path={p}"));
     }
     Ok(final_path)
 }
@@ -682,6 +743,7 @@ fn assign_job_object(pid: Option<u32>) -> Option<windows::Win32::Foundation::HAN
 }
 
 pub async fn cancel(app: &AppHandle, job_id: &str) -> Result<()> {
+    blog(format!("cancel job={job_id}"));
     {
         let map = jobs();
         let mut guard = map.lock().await;

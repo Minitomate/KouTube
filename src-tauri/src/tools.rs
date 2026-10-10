@@ -9,6 +9,8 @@ use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::jobs;
+
 const YTDLP_RELEASES: &str =
     "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
 const YTDLP_RELEASES_WIN: &str =
@@ -177,6 +179,7 @@ pub async fn ensure_tools(app: &AppHandle) -> Result<serde_json::Value> {
     if have_all_tools(app) {
         return Ok(status(app));
     }
+    jobs::blog("ensure_tools: bootstrapping missing tools".to_string());
     let dir = bins_dir(app)?;
     let mut bootstrapped = false;
     if resolve_tool(app, "yt-dlp").is_none() {
@@ -202,6 +205,7 @@ pub async fn ensure_tools(app: &AppHandle) -> Result<serde_json::Value> {
     if !have_all_tools(app) {
         return Err(anyhow!("tools still missing after bootstrap"));
     }
+    jobs::blog("ensure_tools: all tools present".to_string());
     let mut out = status(app);
     out["bootstrapped"] = serde_json::json!(bootstrapped);
     Ok(out)

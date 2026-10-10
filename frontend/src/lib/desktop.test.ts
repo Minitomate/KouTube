@@ -75,3 +75,35 @@ describe('desktop adapter', () => {
     await expect(pickFolder()).resolves.toBe('/tmp/picked');
   });
 });
+
+describe('resolveOutDir', () => {
+  const backing = new Map<string, string>();
+  beforeEach(() => {
+    backing.clear();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => backing.get(k) ?? null,
+      setItem: (k: string, v: string) => { backing.set(k, v); },
+      removeItem: (k: string) => { backing.delete(k); },
+      clear: () => backing.clear(),
+    });
+  });
+
+  it('reuses the cached folder without prompting', async () => {
+    localStorage.setItem('koutube-outdir', '/tmp/keep');
+    const { resolveOutDir } = await import('./desktop');
+    await expect(resolveOutDir()).resolves.toBe('/tmp/keep');
+    expect(openMock).not.toHaveBeenCalled();
+  });
+
+  it('picker rejection becomes a loud error, not silence', async () => {
+    openMock.mockRejectedValue(new Error('denied'));
+    const { resolveOutDir } = await import('./desktop');
+    await expect(resolveOutDir()).rejects.toThrow(/folder picker failed: denied/);
+  });
+
+  it('cancelled picker becomes a loud error, not silence', async () => {
+    openMock.mockResolvedValue(null);
+    const { resolveOutDir } = await import('./desktop');
+    await expect(resolveOutDir()).rejects.toThrow(/No folder selected/);
+  });
+});

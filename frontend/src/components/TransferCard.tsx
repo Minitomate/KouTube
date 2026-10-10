@@ -44,6 +44,9 @@ export default function TransferCard({ transferId }: { transferId: string }) {
           <summary>details</summary>
           <div>stage: {item.stage}{item.note ? ` · ${item.note}` : ''}</div>
           <div>request: {item.rid} (match with backend log)</div>
+          {(item.log ?? []).length > 0 && (
+            <pre style={{ whiteSpace: 'pre-wrap' }}>{(item.log ?? []).join('\n')}</pre>
+          )}
         </details>
       )}
     </div>

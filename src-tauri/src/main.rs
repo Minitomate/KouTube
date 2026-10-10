@@ -54,6 +54,11 @@ async fn cancel_download(app: AppHandle, job_id: String) -> Result<(), String> {
     jobs::cancel(&app, &job_id).await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn get_recent_logs() -> Vec<String> {
+    jobs::recent_logs().await
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -62,7 +67,8 @@ fn main() {
             resolve,
             ensure_tools,
             start_download,
-            cancel_download
+            cancel_download,
+            get_recent_logs
         ])
         .setup(|app| {
             let handle = app.handle().clone();
