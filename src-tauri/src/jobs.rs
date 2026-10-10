@@ -72,7 +72,8 @@ pub(crate) fn blog(line: String) {
     eprintln!("[koutube] {line}");
     if let Ok(rt) = tokio::runtime::Handle::try_current() {
         rt.spawn(async move {
-            let mut guard = logs().lock().await;
+            let logs = logs();
+            let mut guard = logs.lock().await;
             guard.push(line);
             if guard.len() > 200 {
                 let excess = guard.len() - 200;
