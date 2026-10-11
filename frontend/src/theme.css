@@ -29,6 +29,7 @@
   --on-secondary-container: #1d192b;
   --surface: #fef7ff;
   --on-surface: #1d1b20;
+  --on-surface-variant: #49454f;
   --surface-container: #f3edf7;
   --surface-container-high: #ece6f0;
   --outline: #79747e;
@@ -47,6 +48,7 @@
   --on-secondary-container: #e8def8;
   --surface: #141218;
   --on-surface: #e6e0e9;
+  --on-surface-variant: #cac4d0;
   --surface-container: #211f26;
   --surface-container-high: #2b2930;
   --outline: #938f99;
@@ -66,7 +68,8 @@ body {
 /* Focused single column for everything except the two-column inspect grid. */
 .app-shell > :not(.inspect-grid) { max-width: 640px; margin-left: auto; margin-right: auto; }
 .app-shell > .inspect-grid { max-width: none; }
-.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.topbar .row { flex-wrap: wrap; }
 .brand { font-weight: 700; font-size: 20px; letter-spacing: 0.2px; }
 .brand span { color: var(--primary); }
 
@@ -141,9 +144,9 @@ body {
   display: flex; justify-content: center; pointer-events: none;
 }
 .sticky-cta > div { pointer-events: auto; display: flex; gap: 8px; background: var(--surface-container-high); padding: 8px; border-radius: 999px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); }
-.empty { color: var(--outline); font-size: 14px; }
-.row { display: flex; gap: 8px; align-items: center; }
-.meta { font-size: 13px; color: var(--outline); }
+.empty { color: var(--on-surface-variant); font-size: 14px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.meta { font-size: 13px; color: var(--on-surface-variant); }
 .job { border-top: 1px solid var(--outline-variant); padding: 10px 0; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
@@ -207,3 +210,25 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 }
 .md-option:hover, .md-option:focus-visible { background: var(--surface-container-high); outline: none; }
 .md-option .badge { margin-left: auto; }
+
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgb(0 0 0 / 0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px;
+}
+.modal { max-width: 440px; width: 100%; margin: 0; }
+.modal-list { max-height: 160px; overflow-y: auto; font-size: 13px; padding-left: 20px; }
+.dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex: none; }
+.chip.swatch[aria-pressed='true'] { border-color: var(--primary); }
+.log-view {
+  margin-top: 8px; max-height: 220px; overflow-y: auto; font-size: 12px;
+  background: var(--surface-container-high); border-radius: 12px; padding: 10px 12px;
+  white-space: pre-wrap;
+}
+.queue-grid .queue-cards { display: grid; gap: 4px; }
+@media (min-width: 860px) {
+  .queue-cards { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .queue-cards .job { border: 1px solid var(--outline-variant); border-radius: 16px; padding: 12px; }
+}
+@media (min-width: 860px) {
+  .inspect-grid > div:last-child { max-width: 420px; }
+}

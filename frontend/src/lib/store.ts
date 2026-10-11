@@ -8,6 +8,7 @@ export interface Transfer {
   id: string; title: string; loaded: number; total: number | null;
   status: TransferStatus; error?: string;
   stage: TransferStage; note?: string; rid?: string;
+  filepath?: string;
   /** Epoch ms when stage last became finalizing (merge elapsed clock). */
   mergeAt?: number;
   /** Newest-last stage log (desktop flow); cap 30. Absent on older cards. */
@@ -70,6 +71,7 @@ export function effectiveQuality(
 
 interface State {
   step: 0 | 1 | 2;
+  view: 'home' | 'settings';
   url: string;
   inspecting: boolean;
   online: boolean;
@@ -82,6 +84,7 @@ interface State {
   captions: string[];
   queue: Transfer[];
   theme: 'light' | 'dark' | 'auto';
+  seed: string;
   set: (p: Partial<State>) => void;
   toggleCaption: (id: string) => void;
   toggleAudioTrack: (id: string) => void;
@@ -103,6 +106,7 @@ export { QUALITIES };
 
 export const useStore = create<State>((set) => ({
   step: 0,
+  view: 'home' as const,
   url: '',
   inspecting: false,
   media: null,
@@ -114,6 +118,7 @@ export const useStore = create<State>((set) => ({
   captions: [],
   queue: [],
   theme: 'auto',
+  seed: '#6750A4',
   online: true,
   set: (p) => set(p),
   toggleCaption: (id) =>

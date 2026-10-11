@@ -3,6 +3,7 @@ import { useStore, blankTransfer, tlog, effectiveQuality, type Transfer } from '
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA } from '../lib/transfer';
 import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent, pctRate } from '../lib/desktop';
+import { loadSettings, saveSettings } from '../lib/settings';
 import UrlBar from '../components/UrlBar';
 import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
@@ -25,9 +26,12 @@ export default function Home() {
   const [canCancel, setCanCancel] = useState(false);
 
   // Connectivity: navigator flag + lightweight probe; banner blocks starts.
+  // Generation-tagged: a slow probe must never override a fresher event.
+  const probeGen = useRef(0);
   useEffect(() => {
     let dead = false;
     const probe = async () => {
+      const gen = ++probeGen.current;
       if (!navigator.onLine) {
         if (!dead) set({ online: false });
         return;
@@ -37,13 +41,13 @@ export default function Home() {
         const timer = setTimeout(() => ctl.abort(), 8000);
         await fetch('https://www.youtube.com/generate_204', { mode: 'no-cors', signal: ctl.signal });
         clearTimeout(timer);
-        if (!dead) set({ online: true });
+        if (!dead && gen === probeGen.current) set({ online: true });
       } catch {
-        if (!dead) set({ online: false });
+        if (!dead && gen === probeGen.current) set({ online: false });
       }
     };
     const onUp = () => void probe();
-    const onDown = () => { if (!dead) set({ online: false }); };
+    const onDown = () => { probeGen.current++; if (!dead) set({ online: false }); };
     window.addEventListener('online', onUp);
     window.addEventListener('offline', onDown);
     void probe();
@@ -282,7 +286,7 @@ export default function Home() {
       (e) => {
         const m = mapDesktopEvent(e);
         if (m.kind === 'done') {
-          finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end', note: e.note ?? undefined }, 'event: done');
+          finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end', note: e.note ?? undefined, filepath: e.filepath ?? undefined }, 'event: done');
         } else if (m.kind === 'error') {
           finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' }, `event: error ${e.error ?? ''}`);
         } else if (m.kind === 'cancelled') {
@@ -325,7 +329,12 @@ export default function Home() {
     }
     let outDir: string;
     try {
-      outDir = await resolveOutDir();
+      const { settings } = await loadSettings();
+      outDir = settings.outDir || await resolveOutDir();
+      if (settings.splitKinds) {
+        outDir = `${outDir.replace(/[/\\]$/, '')}/${format === 'audio' ? 'Audio' : 'Video'}`;
+      }
+      await saveSettings({ ...settings, outDir: settings.outDir || outDir });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No folder selected');
       return;
@@ -383,7 +392,18 @@ export default function Home() {
         </div>
         <DownloadOptionsCard />
       </div>
-      <QueueView />
+      <QueueView
+        onRemove={(id) => set({ queue: useStore.getState().queue.filter((q) => q.id !== id) })}
+        onClearFinished={() => set({
+          queue: useStore.getState().queue.filter((q) => !['done', 'error', 'cancelled'].includes(q.status)),
+        })}
+        onCancelAll={() => {
+          cancel();
+          set({
+            queue: useStore.getState().queue.filter((q) => !['done', 'error', 'cancelled'].includes(q.status)),
+          });
+        }}
+      />
       {isTauri() && queue.length > 0 && (
         <button className="pill-btn tonal" onClick={copyDebugLog} aria-label="Copy debug log">
           Copy debug log

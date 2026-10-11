@@ -104,10 +104,9 @@ export async function pickFolder(): Promise<string | null> {
   return dialog.open({ directory: true, multiple: false });
 }
 
-/** Folder resolution with loud errors: never silent, never stuck-busy. */
+/** Folder resolution with loud errors: never silent, never stuck-busy.
+ * Always prompts: persistence lives in settings, not here. */
 export async function resolveOutDir(): Promise<string> {
-  const cached = localStorage.getItem('koutube-outdir');
-  if (cached) return cached;
   let picked: string | string[] | null;
   try {
     picked = await pickFolder();
@@ -117,7 +116,6 @@ export async function resolveOutDir(): Promise<string> {
       : 'folder picker failed');
   }
   if (!picked || Array.isArray(picked)) throw new Error('No folder selected');
-  localStorage.setItem('koutube-outdir', picked);
   return picked;
 }
 
@@ -153,6 +151,21 @@ export async function startDesktopDownload(
 export async function cancelDesktopDownload(jobId: string): Promise<void> {
   const { invoke } = await tauri();
   await invoke('cancel_download', { jobId });
+}
+
+export async function trashDownload(path: string): Promise<void> {
+  const { invoke } = await tauri();
+  await invoke('trash_file', { path });
+}
+
+export async function playFile(path: string): Promise<void> {
+  const opener = await import('@tauri-apps/plugin-opener');
+  await opener.openPath(path);
+}
+
+export async function revealFile(path: string): Promise<void> {
+  const opener = await import('@tauri-apps/plugin-opener');
+  await opener.revealItemInDir(path);
 }
 
 export async function ensureDesktopTools(): Promise<void> {

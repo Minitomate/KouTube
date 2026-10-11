@@ -57,6 +57,11 @@ async fn cancel_download(app: AppHandle, job_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn trash_file(path: String) -> Result<(), String> {
+    jobs::trash_file(&path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_recent_logs() -> Vec<String> {
     jobs::recent_logs().await
 }
@@ -66,11 +71,14 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             resolve,
             ensure_tools,
             start_download,
             cancel_download,
+            trash_file,
             get_recent_logs
         ])
         .setup(|app| {

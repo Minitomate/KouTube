@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 const listenMock = vi.fn();
 const openMock = vi.fn();
+const openPathMock = vi.fn();
+const revealMock = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -12,6 +14,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: (...args: unknown[]) => openMock(...args),
+}));
+vi.mock('@tauri-apps/plugin-opener', () => ({
+  openPath: (...args: unknown[]) => openPathMock(...args),
+  revealItemInDir: (...args: unknown[]) => revealMock(...args),
 }));
 
 import {
@@ -24,6 +30,8 @@ beforeEach(() => {
   invokeMock.mockReset();
   listenMock.mockReset();
   openMock.mockReset();
+  openPathMock.mockReset();
+  revealMock.mockReset();
 });
 
 describe('desktop adapter', () => {
@@ -83,6 +91,19 @@ describe('desktop adapter', () => {
     expect(inspectFailedMessage(false)).toContain('backend');
   });
 
+  it('plays, reveals and trashes by exact path', async () => {
+    const { playFile, revealFile, trashDownload } = await import('./desktop');
+    invokeMock.mockResolvedValue(undefined);
+    openPathMock.mockResolvedValue(undefined);
+    revealMock.mockResolvedValue(undefined);
+    await playFile('/tmp/v.mp4');
+    expect(openPathMock).toHaveBeenCalledWith('/tmp/v.mp4');
+    await revealFile('/tmp/v.mp4');
+    expect(revealMock).toHaveBeenCalledWith('/tmp/v.mp4');
+    await trashDownload('/tmp/v.mp4');
+    expect(invokeMock).toHaveBeenCalledWith('trash_file', { path: '/tmp/v.mp4' });
+  });
+
   it('maps sidecar events to card states', async () => {
     const { mapDesktopEvent } = await import('./desktop');
     expect(mapDesktopEvent({ job_id: 'j', status: 'downloading', percent: 42, speed: '1.0MB/s', eta: '00:03' }))
@@ -123,11 +144,11 @@ describe('resolveOutDir', () => {
     });
   });
 
-  it('reuses the cached folder without prompting', async () => {
-    localStorage.setItem('koutube-outdir', '/tmp/keep');
+  it('always prompts (persistence lives in settings)', async () => {
+    openMock.mockResolvedValue('/tmp/fresh');
     const { resolveOutDir } = await import('./desktop');
-    await expect(resolveOutDir()).resolves.toBe('/tmp/keep');
-    expect(openMock).not.toHaveBeenCalled();
+    await expect(resolveOutDir()).resolves.toBe('/tmp/fresh');
+    expect(openMock).toHaveBeenCalled();
   });
 
   it('picker rejection becomes a loud error, not silence', async () => {

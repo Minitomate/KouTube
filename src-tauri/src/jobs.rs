@@ -7,6 +7,7 @@
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -496,6 +497,7 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
 pub async fn start_download(app: &AppHandle, spec: DownloadSpec) -> Result<String> {
     validate_url(&spec.url)?;
     std::fs::create_dir_all(&spec.out_dir).map_err(|e| anyhow!("bad folder: {e}"))?;
+    remember_dir(&spec.out_dir).await;
     let job_id = format!("{:x}", randish());
     blog(format!(
         "download start job={job_id} url={} container={}",
@@ -1067,6 +1069,33 @@ fn assign_job_object(pid: Option<u32>) -> Option<usize> {
         let _ = CloseHandle(proc);
         Some(job.0 as usize)
     }
+}
+
+fn known_dirs() -> Arc<Mutex<std::collections::HashSet<PathBuf>>> {
+    use std::sync::OnceLock;
+    static CELL: OnceLock<Arc<Mutex<std::collections::HashSet<PathBuf>>>> = OnceLock::new();
+    CELL.get_or_init(|| Arc::new(Mutex::new(std::collections::HashSet::new())))
+        .clone()
+}
+
+async fn remember_dir(dir: &str) {
+    known_dirs().lock().await.insert(PathBuf::from(dir));
+}
+
+/// Move a downloaded file to the OS trash. Refuses paths outside known
+/// download dirs (no broad fs scope needed).
+pub async fn trash_file(path: &str) -> Result<()> {
+    let p = PathBuf::from(path);
+    let inside = known_dirs().lock().await.iter().any(|d| p.starts_with(d));
+    if !inside {
+        return Err(anyhow!("refusing to trash outside download folders"));
+    }
+    if !p.exists() {
+        return Ok(()); // idempotent: already gone counts as removed
+    }
+    trash::delete(&p).map_err(|e| anyhow!("trash failed: {e}"))?;
+    blog(format!("trashed path={}", p.display()));
+    Ok(())
 }
 
 pub async fn cancel(app: &AppHandle, job_id: &str) -> Result<()> {

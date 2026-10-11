@@ -8,6 +8,9 @@
     "dialog:allow-save",
     "dialog:allow-open",
     "dialog:allow-message",
-    "clipboard-manager:allow-read-text"
+    "clipboard-manager:allow-read-text",
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir",
+    "store:default"
   ]
 }
