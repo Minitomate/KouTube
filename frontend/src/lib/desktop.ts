@@ -148,28 +148,50 @@ export async function startDesktopDownload(
   onEvent: (e: DesktopEvent) => void,
 ): Promise<{ jobId: string; stop: () => void }> {
   const { invoke, listen } = await tauri();
-  const jobId = (await invoke('start_download', {
-    url: choice.url,
-    videoId: choice.videoId ?? null,
-    container: choice.kind === 'captions' ? 'srt' : choice.outputContainer,
-    quality: choice.kind === 'audio' ? 'best' : choice.quality,
-    // NOTE: Tauri exposes snake_case Rust params as camelCase — do NOT
-    // "fix" these to snake_case (that breaks invoke with `missing key`).
-    codec: choice.kind === 'audio' || choice.codec === 'auto' ? null : choice.codec,
-    audioCodec: choice.kind === 'audio' ? choice.audioCodec : null,
-    audioQuality: choice.kind === 'audio' ? choice.audioQuality : null,
-    captionsFormat: choice.captionsFormat,
-    audioTracks: choice.audioTracks.filter((t) => t !== 'original'),
-    captions: choice.captions,
-    captionsOnly: choice.kind === 'captions',
-    outDir,
-    overwrite: choice.overwrite,
-    splitKinds: choice.splitKinds,
-  })) as string;
+  // Listen BEFORE invoke: the sidecar emits queued + first progress inside
+  // the invoke round-trip, and anything in that window would otherwise be
+  // missed (fast jobs would jump straight from preparing to saved).
+  // Pre-resolution events buffer briefly, then replay for our job only.
+  let jobId: string | null = null;
+  const pending: Array<{ payload: unknown }> = [];
   const stop = await listen('dl://progress', (e) => {
     const p = e.payload as DesktopEvent;
+    if (jobId === null) {
+      pending.push(e);
+      if (pending.length > 50) pending.shift();
+      return;
+    }
     if (p.job_id === jobId) onEvent(p);
   });
+  try {
+    jobId = (await invoke('start_download', {
+      url: choice.url,
+      videoId: choice.videoId ?? null,
+      container: choice.kind === 'captions' ? 'srt' : choice.outputContainer,
+      quality: choice.kind === 'audio' ? 'best' : choice.quality,
+      // NOTE: Tauri exposes snake_case Rust params as camelCase — do NOT
+      // "fix" these to snake_case (that breaks invoke with `missing key`).
+      codec: choice.kind === 'audio' || choice.codec === 'auto' ? null : choice.codec,
+      audioCodec: choice.kind === 'audio' ? choice.audioCodec : null,
+      audioQuality: choice.kind === 'audio' ? choice.audioQuality : null,
+      captionsFormat: choice.captionsFormat,
+      audioTracks: choice.audioTracks.filter((t) => t !== 'original'),
+      captions: choice.captions,
+      captionsOnly: choice.kind === 'captions',
+      outDir,
+      overwrite: choice.overwrite,
+      splitKinds: choice.splitKinds,
+    })) as string;
+  } catch (err) {
+    stop();
+    throw err;
+  }
+  // Synchronous replay: no listener callback can interleave, so nothing is
+  // lost or delivered twice.
+  for (const e of pending.splice(0)) {
+    const p = e.payload as DesktopEvent;
+    if (p.job_id === jobId) onEvent(p);
+  }
   return { jobId, stop };
 }
 

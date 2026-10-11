@@ -88,6 +88,32 @@ describe('desktop adapter', () => {
     });
   });
 
+  it('replays events emitted before invoke resolves', async () => {
+    let resolveInvoke!: (v: string) => void;
+    invokeMock.mockImplementation(() => new Promise<string>((r) => { resolveInvoke = r; }));
+    let handler: { current: ((e: { payload: unknown }) => void) | null } = { current: null };
+    listenMock.mockImplementation((_ev: string, h: (e: { payload: unknown }) => void) => {
+      handler.current = h;
+      return Promise.resolve(() => {});
+    });
+    const seen: string[] = [];
+    const started = startDesktopDownload(
+      { url: 'u', videoId: 'u', kind: 'video', outputContainer: 'mp4', quality: 'best', codec: 'auto', audioCodec: 'mp3', audioQuality: null, captionsFormat: 'srt', audioTracks: [], captions: [], overwrite: false, splitKinds: false },
+      '/tmp',
+      (e) => seen.push(e.status),
+    );
+    // Listener attaches before invoke resolves: early sidecar events buffer…
+    await vi.waitFor(() => expect(handler.current).not.toBeNull());
+    handler.current?.({ payload: { job_id: 'other', status: 'downloading', percent: 1 } });
+    handler.current?.({ payload: { job_id: 'job-7', status: 'downloading', percent: 10 } });
+    resolveInvoke('job-7');
+    await started;
+    // …then replay for our job only once the id is known.
+    expect(seen).toEqual(['downloading']);
+    handler.current?.({ payload: { job_id: 'job-7', status: 'merging', percent: 100 } });
+    expect(seen).toEqual(['downloading', 'merging']);
+  });
+
   it('routes only matching job events to the handler', async () => {
     invokeMock.mockResolvedValue('job-9');
     const holder: { handler: ((e: { payload: unknown }) => void) | null } = { handler: null };

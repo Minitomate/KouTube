@@ -27,6 +27,8 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   // expected byte arrived but the stream continues, say so honestly.
   const raw = item.total ? Math.round((item.loaded / item.total) * 100) : null;
   const pct = raw === null ? null : Math.min(100, raw);
+  // Unknown total: busy stripe, never a fake-full bar.
+  const indeterminate = item.status === 'working' && pct === null;
   const elapsed = item.mergeAt ? fmtElapsed(Date.now() - item.mergeAt) : null;
   const statusText = statusLine(item, elapsed);
   async function play() {
@@ -68,14 +70,14 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
         </button>
       </div>
       <div
-        className="progress-pill"
+        className={`progress-pill${indeterminate ? ' indeterminate' : ''}`}
         role="progressbar"
         {...(pct === null ? {} : { 'aria-valuenow': pct })}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={`Download progress ${item.title}`}
       >
-        <div style={{ width: `${pct ?? 100}%` }} />
+        <div style={pct === null ? undefined : { width: `${pct}%` }} />
       </div>
       {item.error && <div className="field-error" role="alert">{item.error}</div>}
       {actionError && <div className="field-error" role="alert">{actionError}</div>}

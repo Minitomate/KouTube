@@ -68,6 +68,32 @@ test.describe('download (user-end)', () => {
     await expect(page.getByLabel('Download type Video · 720p · mp4')).toBeVisible();
   });
 
+  test('unknown total shows indeterminate busy bar', async ({ page }) => {
+    await mockResolve(page);
+    await page.route('**/api/prepare', (r) =>
+      r.fulfill({
+        json: {
+          filename: 'u.mp4', container: 'mp4', mergeRequired: false,
+          sizeEstimate: null, streamToken: 's', muxToken: null, captions: [],
+        },
+      }),
+    );
+    await page.route('**/api/stream*', async (r) => {
+      await new Promise((s) => setTimeout(s, 800));
+      return r.fulfill({ status: 200, body: 'hello-koutube', contentType: 'video/mp4' });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.download();
+    const bar = page.getByRole('progressbar');
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveClass(/indeterminate/);
+    expect(await bar.getAttribute('aria-valuenow')).toBeNull();
+    await expect(page.getByText('Downloading', { exact: false }).first()).toBeVisible();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+  });
+
   test('mp3-only audio request', async ({ page }) => {
     await mockResolve(page);
     let posted: Record<string, unknown> | undefined;
