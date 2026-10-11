@@ -84,6 +84,39 @@ export function transferUrl(p: Prepare): string {
     : `/api/stream?token=${encodeURIComponent(p.streamToken)}`;
 }
 
+/** Badge text for a transfer: kind plus language/quality detail. */
+export function kindBadge(kind: 'video' | 'audio' | 'captions' | undefined, detail?: string): string | null {
+  if (!kind) return null;
+  const label = kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : 'Captions';
+  return detail ? `${label} · ${detail}` : label;
+}
+
+export interface StatusView {
+  status: 'working' | 'done' | 'error' | 'cancelled';
+  stage: string;
+  loaded: number;
+  total: number | null;
+  note?: string;
+  error?: string;
+}
+
+/** Card status line: stage label + bytes (X/Y when known) + speed/ETA note. */
+export function statusLine(t: StatusView, elapsed: string | null): string {
+  if (t.status === 'done') return t.note ? `Saved ✓ · ${t.note}` : 'Saved ✓';
+  if (t.status === 'error') return `failed: ${t.error ?? ''}`;
+  if (t.status === 'cancelled') return 'cancelled';
+  if (t.stage === 'preparing') return 'Preparing…';
+  const bytes = t.total !== null
+    ? `${fmtBytes(t.loaded)}/${fmtBytes(t.total)}`
+    : t.loaded > 0 ? `${fmtBytes(t.loaded)} downloaded` : null;
+  const withNote = (base: string) => (t.note ? `${base} · ${t.note}` : base);
+  const processing = t.stage === 'processing' || (t.total !== null && t.loaded >= t.total);
+  if (processing) {
+    return withNote(`Processing… ${fmtBytes(t.loaded)} received${elapsed ? ` · ${elapsed}` : ''}`);
+  }
+  return withNote(`Downloading${bytes ? ` · ${bytes}` : ''}`);
+}
+
 /** Insert ` [tag]` before the extension: `Title [id].mp3` → `Title [id] [en].mp3`. */
 export function tagFilename(filename: string, tag: string): string {
   const i = filename.lastIndexOf('.');
@@ -119,12 +152,14 @@ export interface FetchOpts {
   maxResumes?: number;
   /** Correlates client progress with server logs (X-Request-ID). */
   requestId?: string;
-  /** Stage transitions: 'fetching' on first byte, 'finalizing' past estimate. */
-  onStage?: (stage: 'fetching' | 'finalizing', note?: string) => void;
+  /** Stage transitions: 'downloading' on first byte, 'processing' past estimate. */
+  onStage?: (stage: 'downloading' | 'processing', note?: string) => void;
   /** Server-side staging ticks (pre-first-byte): drive bar + note from them. */
   onServerProgress?: (loaded: number, total: number | null, note: string) => void;
   /** Client-computed throughput from actual arrivals (fallback when server is silent). */
   onRate?: (bytesPerSec: number, etaSec: number | null) => void;
+  /** Post-fetch work (merge/extract) will run: allow the processing stage. */
+  willProcess?: boolean;
   /** Direct upstream URL: probed first, proxy fallback on failure. */
   directUrl?: string;
   /** Skip the total probe (mux URLs: probing would run the merge twice). */
@@ -164,8 +199,11 @@ function totalFrom206(res: Response): number | null {
   return m ? Number(m[1]) : null;
 }
 
-export function fmtMB(n: number): string {
-  return `${(n / 1048576).toFixed(n >= 104857600 ? 0 : 1)} MB`;
+export function fmtBytes(n: number): string {
+  if (n >= 1073741824) return `${(n / 1073741824).toFixed(1)} GB`;
+  if (n >= 1048576) return `${(n / 1048576).toFixed(n >= 104857600 ? 0 : 1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
 }
 
 export function fmtRate(bps: number): string {
@@ -274,13 +312,13 @@ export async function downloadToDisk(
         if (!p || !p.phase || p.phase === 'ready' || p.phase === 'error' || p.phase === 'pending') return;
         const what = p.phase.startsWith('staging-') ? p.phase.slice(8) : p.phase;
         const have = p.loaded ?? 0;
-        const of = p.total ? ` / ${fmtMB(p.total)}` : '';
+        const of = p.total ? ` / ${fmtBytes(p.total)}` : '';
         const rate = p.rate ? ` · ${fmtRate(p.rate)}` : '';
         const eta = p.eta != null ? ` · ${fmtETA(p.eta)} left` : '';
         const note = p.phase === 'muxing'
           ? 'Merging on server…'
-          : `Staging ${what} · ${fmtMB(have)}${of}${rate}${eta}`;
-        onStage?.('fetching', `server: ${note}`);
+          : `Staging ${what} · ${fmtBytes(have)}${of}${rate}${eta}`;
+        onStage?.('downloading', `server: ${note}`);
         opts.onServerProgress?.(have, p.total ?? null, note);
       } catch { /* poller is best-effort only */ }
     };
@@ -400,8 +438,9 @@ export async function downloadToDisk(
       const sum = per.reduce((a, b) => a + b, 0);
       onProgress(sum, total);
       track(sum);
-      if (first) { first = false; onStage?.('fetching'); }
-      if (sum >= total) onStage?.('finalizing', `${(sum / 1048576).toFixed(1)} MB received`);
+      if (first) { first = false; onStage?.('downloading'); }
+      // Processing only when post-fetch work (merge/extract) will actually run.
+      if (sum >= total && opts?.willProcess) onStage?.('processing', `${fmtBytes(sum)} received`);
     };
     const limit = pLimit(PART_CONCURRENCY);
     await Promise.all(parts.map((pt, i) => limit(async () => {
@@ -449,9 +488,9 @@ export async function downloadToDisk(
           loaded += read.value.byteLength;
           onProgress(loaded, total);
           track(loaded);
-          if (firstByte) { firstByte = false; onStage?.('fetching'); }
-          if (total !== null && loaded >= total) {
-            onStage?.('finalizing', `${(loaded / 1048576).toFixed(1)} MB received`);
+          if (firstByte) { firstByte = false; onStage?.('downloading'); }
+          if (total !== null && loaded >= total && opts?.willProcess) {
+            onStage?.('processing', `${fmtBytes(loaded)} received`);
           }
         }
       } finally {

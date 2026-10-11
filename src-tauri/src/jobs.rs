@@ -267,6 +267,8 @@ pub async fn existing_outputs(out_dir: &str, video_id: &str) -> Vec<String> {
 struct JobView {
     status: String,
     percent: f64,
+    loaded: Option<u64>,
+    total: Option<u64>,
     speed: Option<String>,
     eta: Option<String>,
     title: Option<String>,
@@ -328,6 +330,7 @@ fn emit_progress(app: &AppHandle, job_id: &str, view: &JobView) {
         "dl://progress",
         serde_json::json!({
             "job_id": job_id, "status": view.status, "percent": view.percent,
+            "loaded": view.loaded, "total": view.total,
             "speed": view.speed, "eta": view.eta, "title": view.title,
             "filepath": view.filepath, "error": view.error, "note": view.note,
         }),
@@ -343,7 +346,8 @@ async fn emit_queue(app: &AppHandle) {
         .iter()
         .map(|(id, h)| {
             serde_json::json!({ "job_id": id, "status": h.view.status,
-            "percent": h.view.percent, "title": h.view.title,
+            "percent": h.view.percent, "loaded": h.view.loaded, "total": h.view.total,
+            "title": h.view.title,
             "filepath": h.view.filepath, "error": h.view.error })
         })
         .collect();
@@ -635,6 +639,12 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
 // download
 // ---------------------------------------------------------------------------
 
+/// Machine-readable progress: byte counts the classic `[download]` line
+/// lacks. Carries percent/speed/eta too so the template fully replaces the
+/// classic line (parsers keep accepting both).
+const PROGRESS_TEMPLATE: &str =
+    "[PB] %(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s";
+
 /// Map UI codec names to yt-dlp vcodec matchers. `^=` is a prefix match;
 /// HEVC needs alternation (hev1/hev* and hvc1 both occur in the wild).
 fn vcodec_filter(codec: &str) -> Option<&'static str> {
@@ -748,6 +758,8 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         // Captions-only: no media stream, just sidecar subtitle files.
         let mut args = vec![
             "--newline".to_string(),
+            "--progress-template".to_string(),
+            PROGRESS_TEMPLATE.to_string(),
             "--no-warnings".to_string(),
             "--no-playlist".to_string(),
             "--socket-timeout".to_string(),
@@ -775,6 +787,8 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
     );
     let mut args = vec![
         "--newline".to_string(),
+        "--progress-template".to_string(),
+        PROGRESS_TEMPLATE.to_string(),
         "--no-warnings".to_string(),
         "--no-playlist".to_string(),
         "--socket-timeout".to_string(),
@@ -1184,6 +1198,25 @@ async fn run_once(
             Ok(Ok(None)) => break, // EOF
             Ok(Ok(Some(l))) => {
                 *last_out.lock().await = Instant::now();
+                // PB template first (byte counts); classic line kept as fallback.
+                if let Some((loaded, total, pct, speed, eta)) = parse_pb_line(&l) {
+                    set_status(
+                        app,
+                        job_id,
+                        JobView {
+                            status: "downloading".into(),
+                            percent: pct,
+                            loaded: Some(loaded),
+                            total,
+                            speed,
+                            eta,
+                            title: spec.title.clone(),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                    continue;
+                }
                 let ev = parse_progress(&l).or_else(|| {
                     // Fallback: any percent in a [download] line counts, even
                     // when speed/ETA decorations differ by yt-dlp version.
@@ -1279,6 +1312,45 @@ fn is_skip_line(line: &str) -> bool {
     line.contains("has already been downloaded")
 }
 
+/// Parse our `--progress-template` line:
+/// `[PB] downloaded|total|estimate|percent|speed|eta` (`NA` when unknown).
+/// Total prefers exact bytes, falling back to the `~` estimate.
+fn parse_pb_line(line: &str) -> Option<(u64, Option<u64>, f64, Option<String>, Option<String>)> {
+    let rest = line.strip_prefix("[PB]")?.trim();
+    let mut parts = rest.splitn(6, '|');
+    let loaded = parts.next()?.trim().parse::<u64>().ok()?;
+    let total = parts.next().and_then(|s| {
+        let s = s.trim();
+        if s == "NA" {
+            None
+        } else {
+            s.parse::<u64>().ok()
+        }
+    });
+    let estimate = parts.next().and_then(|s| {
+        let s = s.trim();
+        if s == "NA" {
+            None
+        } else {
+            s.parse::<u64>().ok()
+        }
+    });
+    let pct = parts
+        .next()?
+        .trim()
+        .strip_suffix('%')?
+        .trim()
+        .parse::<f64>()
+        .ok()?;
+    let opt = |s: Option<&str>| {
+        s.map(|v| v.trim().to_string())
+            .filter(|v| v != "NA" && v != "Unknown" && !v.is_empty())
+    };
+    let speed = opt(parts.next());
+    let eta = opt(parts.next());
+    Some((loaded, total.or(estimate), pct, speed, eta))
+}
+
 /// Fallback percent: first `N.N%` anywhere in the line. Used when the strict
 /// parser misses a yt-dlp variant; speed/ETA stay unknown (client computes).
 fn fallback_percent(line: &str) -> Option<f64> {
@@ -1325,6 +1397,27 @@ fn parse_progress(line: &str) -> Option<(f64, Option<String>, Option<String>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pb_line_parses_bytes_and_falls_back_to_estimate() {
+        let (loaded, total, pct, speed, eta) =
+            parse_pb_line("[PB] 12345|67890|NA| 18.2%|1.23MiB/s|00:03").unwrap();
+        assert_eq!(loaded, 12345);
+        assert_eq!(total, Some(67890));
+        assert!((pct - 18.2).abs() < f64::EPSILON);
+        assert_eq!(speed.as_deref(), Some("1.23MiB/s"));
+        assert_eq!(eta.as_deref(), Some("00:03"));
+        // Exact total missing: estimate wins; NA speed/eta become unknown.
+        let (_, total, _, speed, eta) = parse_pb_line("[PB] 100|NA|5000| 2.0%|NA|Unknown").unwrap();
+        assert_eq!(total, Some(5000));
+        assert!(speed.is_none());
+        assert!(eta.is_none());
+        // Nothing usable without a total of some kind is still fine (None),
+        // but garbage and non-PB lines are rejected.
+        assert!(parse_pb_line("[PB] NA/NA/NA/ NA/NA/NA").is_none());
+        assert!(parse_pb_line("[download]  12.3% of 4MiB").is_none());
+        assert!(parse_pb_line("").is_none());
+    }
 
     #[test]
     fn progress_line_parses() {

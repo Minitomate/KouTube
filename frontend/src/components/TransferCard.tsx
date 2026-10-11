@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
+import { kindBadge, statusLine } from '../lib/transfer';
 import { isTauri, playFile, revealFile, trashDownload } from '../lib/desktop';
 import Confirm from './Confirm';
-
-function mb(n: number) {
-  return `${(n / 1048576).toFixed(1)} MB`;
-}
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -17,7 +14,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   const [confirmTrash, setConfirmTrash] = useState(false);
   const [actionError, setActionError] = useState('');
   const [, setTick] = useState(0);
-  const alive = item?.status === 'working' && item.stage === 'finalizing';
+  const alive = item?.status === 'working' && item.stage === 'processing';
   useEffect(() => {
     if (!alive) return;
     const t = setInterval(() => setTick((n) => n + 1), 1000);
@@ -25,22 +22,13 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   }, [alive, transferId]);
   if (!item) return null;
   const done = item.status === 'done';
+  const badge = kindBadge(item.kind, item.detail);
   // Totals can be estimates (mux): never render over 100%. Once every
   // expected byte arrived but the stream continues, say so honestly.
   const raw = item.total ? Math.round((item.loaded / item.total) * 100) : null;
   const pct = raw === null ? null : Math.min(100, raw);
-  const finalizing = item.status === 'working' &&
-    (item.stage === 'finalizing' || (item.total !== null && item.loaded >= item.total));
   const elapsed = item.mergeAt ? fmtElapsed(Date.now() - item.mergeAt) : null;
-  const statusText =
-    done ? (item.note ? `saved ✓ · ${item.note}` : 'saved ✓')
-    : item.status === 'error' ? `failed: ${item.error ?? ''}`
-    : item.status === 'cancelled' ? 'cancelled'
-    : item.stage === 'preparing' ? 'preparing…'
-    : finalizing ? `Finalizing… ${mb(item.loaded)} received${elapsed ? ` · ${elapsed}` : ''}`
-    : item.note ? item.note
-    : pct === null ? 'merging…'
-    : `${pct}%`;
+  const statusText = statusLine(item, elapsed);
   async function play() {
     if (!item?.filepath) return;
     try {
@@ -72,6 +60,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   return (
     <div className="job">
       <div className="row">
+        {badge && <span className="chip tonal" aria-label={`Download type ${badge}`}>{badge}</span>}
         <strong style={{ flex: 1 }}>{item.title}</strong>
         <span className="meta">{statusText}</span>
         <button className="pill-btn text" style={{ minHeight: 32 }} aria-label={`Remove ${item.title}`} onClick={() => onRemove(transferId)}>
@@ -81,7 +70,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       <div
         className="progress-pill"
         role="progressbar"
-        aria-valuenow={pct ?? 0}
+        {...(pct === null ? {} : { 'aria-valuenow': pct })}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={`Download progress ${item.title}`}

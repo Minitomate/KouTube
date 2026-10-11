@@ -140,9 +140,10 @@ describe('desktop adapter', () => {
   it('maps sidecar events to card states', async () => {
     const { mapDesktopEvent } = await import('./desktop');
     expect(mapDesktopEvent({ job_id: 'j', status: 'downloading', percent: 42, speed: '1.0MB/s', eta: '00:03' }))
-      .toMatchObject({ kind: 'progress', percent: 42, stage: 'fetching' });
-    expect(mapDesktopEvent({ job_id: 'j', status: 'merging', percent: 100 }).stage).toBe('finalizing');
-    expect(mapDesktopEvent({ job_id: 'j', status: 'retrying', percent: 10 }).stage).toBe('finalizing');
+      .toMatchObject({ kind: 'progress', percent: 42, stage: 'downloading', loaded: null, total: null });
+    expect(mapDesktopEvent({ job_id: 'j', status: 'merging', percent: 100 }).stage).toBe('processing');
+    // Retrying re-downloads: never shown as processing.
+    expect(mapDesktopEvent({ job_id: 'j', status: 'retrying', percent: 10 }).stage).toBe('downloading');
     expect(mapDesktopEvent({ job_id: 'j', status: 'done', percent: 100 }).kind).toBe('done');
     expect(mapDesktopEvent({ job_id: 'j', status: 'error', percent: 0 }).kind).toBe('error');
     expect(mapDesktopEvent({ job_id: 'j', status: 'cancelled', percent: 0 }).kind).toBe('cancelled');
@@ -151,17 +152,23 @@ describe('desktop adapter', () => {
     expect(noted.note).toContain('ETA 00:01');
   });
 
-  it('computes client %/s over a rolling window', async () => {
-    const { pctRate } = await import('./desktop');
+  it('prefers sidecar byte counts over percent', async () => {
+    const { mapDesktopEvent } = await import('./desktop');
+    const m = mapDesktopEvent({ job_id: 'j', status: 'downloading', percent: 0, loaded: 25, total: 100 });
+    expect(m).toMatchObject({ kind: 'progress', percent: 25, loaded: 25, total: 100, stage: 'downloading' });
+  });
+
+  it('computes client rate over a rolling window', async () => {
+    const { byteRate } = await import('./desktop');
     const t0 = 1000000;
     const samples = [
       { t: t0, p: 10 },
       { t: t0 + 1000, p: 12 },
       { t: t0 + 2000, p: 14 },
     ];
-    expect(pctRate(samples, t0 + 2000)).toBeCloseTo(2, 5);
-    expect(pctRate([{ t: t0, p: 10 }], t0 + 1000)).toBeNull();
-    expect(pctRate(samples, t0 + 10000)).toBeNull(); // stale window
+    expect(byteRate(samples, t0 + 2000)).toBeCloseTo(2, 5);
+    expect(byteRate([{ t: t0, p: 10 }], t0 + 1000)).toBeNull();
+    expect(byteRate(samples, t0 + 10000)).toBeNull(); // stale window
   });
 });
 

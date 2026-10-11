@@ -47,6 +47,8 @@ export interface DesktopEvent {
   job_id: string;
   status: string;
   percent: number;
+  loaded?: number | null;
+  total?: number | null;
   speed?: string | null;
   eta?: string | null;
   title?: string | null;
@@ -55,17 +57,20 @@ export interface DesktopEvent {
   note?: string | null;
 }
 
-export type CardStage = 'fetching' | 'finalizing';
+export type CardStage = 'downloading' | 'processing';
 
 export interface MappedEvent {
   kind: 'progress' | 'done' | 'error' | 'cancelled';
   percent: number;
+  /** Real byte counts when the sidecar reports them; null = unknown. */
+  loaded: number | null;
+  total: number | null;
   stage: CardStage;
   note?: string;
 }
 
-/** Client-side %/s rate over a rolling window (fallback when server omits speed). */
-export function pctRate(
+/** Client-side rate over a rolling window (fallback when server omits speed). */
+export function byteRate(
   samples: Array<{ t: number; p: number }>,
   now: number,
   windowMs = 5000,
@@ -80,13 +85,20 @@ export function pctRate(
 
 /** Pure mapping: sidecar event -> card state. Unit-tested, no side effects. */
 export function mapDesktopEvent(e: DesktopEvent): MappedEvent {
-  if (e.status === 'done') return { kind: 'done', percent: 100, stage: 'finalizing' };
-  if (e.status === 'error') return { kind: 'error', percent: 0, stage: 'finalizing' };
-  if (e.status === 'cancelled') return { kind: 'cancelled', percent: 0, stage: 'fetching' };
+  if (e.status === 'done') return { kind: 'done', percent: 100, loaded: null, total: null, stage: 'processing' };
+  if (e.status === 'error') return { kind: 'error', percent: 0, loaded: null, total: null, stage: 'processing' };
+  if (e.status === 'cancelled') return { kind: 'cancelled', percent: 0, loaded: null, total: null, stage: 'downloading' };
+  // Retrying re-downloads: never show it as processing.
+  const processing = e.status === 'merging';
+  const hasBytes = e.loaded != null && (e.total ?? 0) > 0;
   return {
     kind: 'progress',
-    percent: e.percent,
-    stage: e.status === 'merging' || e.status === 'retrying' ? 'finalizing' : 'fetching',
+    percent: hasBytes
+      ? Math.min(100, Math.round(((e.loaded as number) / (e.total as number)) * 100))
+      : e.percent,
+    loaded: hasBytes ? (e.loaded as number) : null,
+    total: hasBytes ? (e.total as number) : null,
+    stage: processing ? 'processing' : 'downloading',
     note: [e.speed, e.eta ? `ETA ${e.eta}` : '', e.error ?? '', e.note ?? '']
       .filter(Boolean).join(' · ') || undefined,
   };

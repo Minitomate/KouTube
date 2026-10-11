@@ -49,6 +49,25 @@ test.describe('download (user-end)', () => {
     expect(posted).toMatchObject({ quality: '720', container: 'mp4' });
   });
 
+  test('card shows kind badge and Downloading state', async ({ page }) => {
+    await mockResolve(page);
+    await mockPrepare(page);
+    await page.route('**/api/stream*', async (r) => {
+      await new Promise((s) => setTimeout(s, 800));
+      return r.fulfill({ status: 200, body: 'hello-koutube', contentType: 'video/mp4' });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('video');
+    await app.pickQuality('720');
+    await app.download();
+    await expect(page.getByLabel('Download type Video · 720p · mp4')).toBeVisible();
+    await expect(page.getByText('Downloading', { exact: false }).first()).toBeVisible();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByLabel('Download type Video · 720p · mp4')).toBeVisible();
+  });
+
   test('mp3-only audio request', async ({ page }) => {
     await mockResolve(page);
     let posted: Record<string, unknown> | undefined;
@@ -144,7 +163,7 @@ test.describe('stall recovery (user-end)', () => {
     expect(muxHit[0]).toContain('token=mux-test-token');
   });
 
-  test('overrun past estimate completes via Finalizing', async ({ page }) => {
+  test('overrun past estimate completes via Processing', async ({ page }) => {
     await mockResolve(page);
     await page.route('**/api/prepare', (r) =>
       r.fulfill({
@@ -155,7 +174,7 @@ test.describe('stall recovery (user-end)', () => {
       }),
     );
     // Delivers 10 bytes against a 5-byte estimate: must complete (honest
-    // Finalizing state), never pin at a frozen 100%.
+    // Processing state), never pin at a frozen 100%.
     await page.route('**/api/stream*', (r) =>
       r.fulfill({ status: 200, body: '0123456789', contentType: 'video/mp4' }),
     );

@@ -4,13 +4,16 @@ import type { DownloadDefaults } from './settings';
 
 export type Format = 'video' | 'audio' | 'captions';
 export type TransferStatus = 'working' | 'done' | 'error' | 'cancelled';
-export type TransferStage = 'preparing' | 'fetching' | 'finalizing' | 'zipping' | 'end';
+export type TransferStage = 'preparing' | 'downloading' | 'processing' | 'zipping' | 'end';
+export type TransferKind = 'video' | 'audio' | 'captions';
 export interface Transfer {
   id: string; title: string; loaded: number; total: number | null;
   status: TransferStatus; error?: string;
   stage: TransferStage; note?: string; rid?: string;
   filepath?: string;
-  /** Epoch ms when stage last became finalizing (merge elapsed clock). */
+  /** What is downloading (badge) + human detail (language, quality). */
+  kind?: TransferKind; detail?: string;
+  /** Epoch ms when stage last became processing (elapsed clock). */
   mergeAt?: number;
   /** Newest-last stage log (desktop flow); cap 30. Absent on older cards. */
   log?: string[];
