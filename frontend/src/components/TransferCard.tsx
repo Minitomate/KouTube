@@ -35,16 +35,16 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
     if (!item?.filepath) return;
     try {
       await playFile(item.filepath);
-    } catch {
-      setActionError('Could not open the file.');
+    } catch (e) {
+      setActionError(e instanceof Error ? `Could not open the file: ${e.message}` : 'Could not open the file.');
     }
   }
   async function reveal() {
     if (!item?.filepath) return;
     try {
       await revealFile(item.filepath);
-    } catch {
-      setActionError('Could not open the folder.');
+    } catch (e) {
+      setActionError(e instanceof Error ? `Could not open the folder: ${e.message}` : 'Could not open the folder.');
     }
   }
   async function trash() {
