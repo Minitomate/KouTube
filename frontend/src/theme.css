@@ -70,7 +70,7 @@ body {
 .app-shell > .inspect-grid { max-width: none; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .topbar .row { flex-wrap: wrap; }
-.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.2px; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.2px; display: inline-flex; align-items: center; gap: 3px; }
 .brand span { color: var(--primary); }
 
 .stepper { display: flex; gap: 8px; margin: 12px 0 20px; }

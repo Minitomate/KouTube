@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Home, { ThemeToggle } from './routes/Home';
 import Settings from './routes/Settings';
+import LogoIcon from './components/LogoIcon';
 import { useStore, resolveTheme, applyDownloadDefaults } from './lib/store';
 import { loadSettings, applyTheme } from './lib/settings';
 
@@ -27,7 +28,7 @@ function Shell() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand">Kou<span>Tube</span></div>
+        <div className="brand" aria-label="KouTube"><LogoIcon />ou<span>Tube</span></div>
         <nav className="row" aria-label="Sections">
           <button className="pill-btn tonal" style={{ minHeight: 40 }} aria-pressed={view === 'home'} onClick={() => set({ view: 'home' })}>
             Download

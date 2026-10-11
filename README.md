@@ -1,4 +1,4 @@
-# KouTube
+# <img src="src-tauri/icons/icon.svg" width="36" alt="K">outube
 
 A local-only YouTube downloader for desktop. Paste a link, pick what you want, save it straight to your disk — no accounts, no servers, no uploads.
 

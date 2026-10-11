@@ -115,6 +115,7 @@ test.describe('settings tab', () => {
   test('legal card renders with terms link', async ({ page }) => {
     const app = new KouTubePage(page);
     await app.goto();
+    await expect(page.getByLabel('KouTube', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Legal' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'YouTube Terms' })).toBeVisible();
