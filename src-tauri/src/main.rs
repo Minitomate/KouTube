@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! KouTube desktop core: yt-dlp/ffmpeg sidecar orchestration.
 //!
 //! Design notes (from production war stories, applied here, not rediscovered):
