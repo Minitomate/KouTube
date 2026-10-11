@@ -85,6 +85,7 @@ interface State {
   queue: Transfer[];
   theme: 'light' | 'dark' | 'auto';
   seed: string;
+  variant: 'tonal-spot' | 'vibrant' | 'expressive';
   set: (p: Partial<State>) => void;
   toggleCaption: (id: string) => void;
   toggleAudioTrack: (id: string) => void;
@@ -119,6 +120,7 @@ export const useStore = create<State>((set) => ({
   queue: [],
   theme: 'auto',
   seed: '#6750A4',
+  variant: 'tonal-spot' as const,
   online: true,
   set: (p) => set(p),
   toggleCaption: (id) =>

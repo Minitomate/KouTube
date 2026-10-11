@@ -139,6 +139,11 @@ body {
 .progress-pill { background: var(--surface-container-high); border-radius: var(--radius-pill); height: 20px; overflow: hidden; }
 .progress-pill > div { height: 100%; background: var(--primary); border-radius: var(--radius-pill); transition: width 0.2s; }
 
+/* CTA-embedded progress: fill + label inside the download button. */
+.cta-progress { position: relative; overflow: hidden; min-width: 220px; }
+.cta-fill { position: absolute; inset: 0 auto 0 0; background: rgb(255 255 255 / 0.25); pointer-events: none; }
+.cta-label { position: relative; z-index: 1; }
+
 .sticky-cta {
   position: fixed; left: 0; right: 0; bottom: 16px;
   display: flex; justify-content: center; pointer-events: none;

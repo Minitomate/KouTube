@@ -3,10 +3,11 @@
 // POST /api/prepare (see lib/transfer.ts) -> Prepare (zod-validated).
 import { z } from 'zod';
 
-export interface AudioTrack { id: string; label: string; lang?: string }
+export interface AudioTrack { id: string; label: string; lang?: string; original?: boolean }
 export interface CaptionTrack { id: string; label: string; lang: string; manual: boolean }
 export interface PlaylistEntry { videoId: string; title: string }
 export interface MediaInfo {
+  videoId?: string;
   title: string; duration: number; thumbnail?: string;
   description: string;
   channel?: string; channelUrl?: string; channelVerified?: boolean;
@@ -17,14 +18,6 @@ export interface MediaInfo {
   formatCodecs: Array<{ height: number; vcodec: string }>;
   audioTracks: AudioTrack[]; captions: CaptionTrack[];
   isPlaylist?: boolean; playlistCount?: number; entries?: PlaylistEntry[];
-}
-
-export interface AudioTrack { id: string; label: string; lang?: string }
-export interface CaptionTrack { id: string; label: string; lang: string; manual: boolean }
-export interface MediaInfo {
-  title: string; duration: number; thumbnail?: string;
-  qualities: string[]; audioTracks: AudioTrack[]; captions: CaptionTrack[];
-  isPlaylist?: boolean; playlistCount?: number;
 }
 const BackendResolve = z.object({
   videoId: z.string().nullable().optional(),
@@ -48,6 +41,7 @@ const BackendResolve = z.object({
   audioTracks: z.array(z.object({
     lang: z.string(), label: z.string(),
     is_default: z.boolean().optional(),
+    is_original: z.boolean().optional(),
   })).default([]),
   manualCaptions: z.array(z.object({ lang: z.string(), label: z.string() }))
     .default([]),
@@ -57,12 +51,23 @@ const BackendResolve = z.object({
   })).default([]),
 });
 
+/** Drop exact-duplicate track ids (und/original echoes collapse upstream). */
+export function dedupeTracks(tracks: AudioTrack[]): AudioTrack[] {
+  const seen = new Set<string>();
+  return tracks.filter((t) => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+}
+
 export function normalizeMedia(raw: unknown): MediaInfo {
   const b = BackendResolve.parse(raw);
   const heights = [...new Set(
     b.formats.map((f) => f.height).filter((h): h is number => !!h),
   )].sort((x, y) => x - y);
   return {
+    videoId: b.videoId ?? undefined,
     title: b.title,
     duration: b.duration ?? 0,
     thumbnail: b.thumbnail ?? undefined,
@@ -79,12 +84,11 @@ export function normalizeMedia(raw: unknown): MediaInfo {
     formatCodecs: b.formats
       .filter((f) => f.height && f.vcodec)
       .map((f) => ({ height: f.height as number, vcodec: f.vcodec as string })),
-    audioTracks: [
-      { id: 'original', label: 'Original' },
-      ...b.audioTracks
+    audioTracks: dedupeTracks(
+      b.audioTracks
         .filter((t) => t.lang !== 'und')
-        .map((t) => ({ id: t.lang, label: t.label, lang: t.lang })),
-    ],
+        .map((t) => ({ id: t.lang, label: t.label, lang: t.lang, original: t.is_original ?? t.is_default ?? undefined })),
+    ),
     captions: b.manualCaptions.map((c) => ({
       id: c.lang, label: c.label, lang: c.lang, manual: true,
     })),

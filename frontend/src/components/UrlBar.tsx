@@ -3,6 +3,15 @@ import { z } from 'zod';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { isTauri, desktopResolve, ensureDesktopTools, inspectFailedMessage, readClipboardText } from '../lib/desktop';
+import type { MediaInfo } from '../lib/api';
+
+/** Default selection: the video's original language track (marker, else first). */
+export function defaultAudio(media: MediaInfo): string[] {
+  const tracks = media.audioTracks;
+  if (!tracks.length) return [];
+  const orig = tracks.find((t) => t.original) ?? tracks[0];
+  return [orig.id];
+}
 
 const ytSchema = z.string().url().refine(
   (u) => /(youtube\.com|youtu\.be)/.test(u),
@@ -36,10 +45,10 @@ export default function UrlBar() {
           return;
         }
         const media = await desktopResolve(value);
-        set({ url: value, media, step: 1 });
+        set({ url: value, media, step: 1, audioTracks: defaultAudio(media) });
       } else {
         const media = await api.resolve(value);
-        set({ url: value, media, step: 1 });
+        set({ url: value, media, step: 1, audioTracks: defaultAudio(media) });
       }
     } catch {
       setError(inspectFailedMessage(isTauri()));

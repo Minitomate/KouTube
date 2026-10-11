@@ -26,6 +26,7 @@ async fn ensure_tools(app: AppHandle) -> Result<serde_json::Value, String> {
 async fn start_download(
     app: AppHandle,
     url: String,
+    video_id: Option<String>,
     container: String,
     quality: serde_json::Value,
     codec: Option<String>,
@@ -33,11 +34,14 @@ async fn start_download(
     captions: Vec<String>,
     out_dir: String,
     title: Option<String>,
+    overwrite: bool,
+    split_kinds: bool,
 ) -> Result<String, String> {
     jobs::start_download(
         &app,
         jobs::DownloadSpec {
             url,
+            video_id,
             container,
             quality,
             codec,
@@ -45,10 +49,17 @@ async fn start_download(
             captions,
             out_dir,
             title,
+            overwrite,
+            split_kinds,
         },
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn existing_outputs(out_dir: String, video_id: String) -> Vec<String> {
+    jobs::existing_outputs(&out_dir, &video_id).await
 }
 
 #[tauri::command]
@@ -79,6 +90,7 @@ fn main() {
             start_download,
             cancel_download,
             trash_file,
+            existing_outputs,
             get_recent_logs
         ])
         .setup(|app| {

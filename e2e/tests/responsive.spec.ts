@@ -100,3 +100,17 @@ test.describe('responsive tablet', () => {
     expect(overflow).toBeLessThanOrEqual(1);
   });
 });
+
+test.describe('responsive desktop wide', () => {
+  test.use({ viewport: { width: 1536, height: 864 } });
+
+  test('no horizontal overflow, two columns side by side', async ({ page }) => {
+    await inspected(page);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+    const info = await page.locator('.inspect-grid > div').first().boundingBox();
+    const opts = await page.locator('.inspect-grid > div').nth(1).boundingBox();
+    expect(info && opts && Math.abs((opts?.y ?? 0) - (info?.y ?? 0))).toBeLessThan(40);
+    await expect(page.getByLabel('Download', { exact: true })).toBeVisible();
+  });
+});

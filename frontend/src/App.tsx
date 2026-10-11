@@ -8,20 +8,20 @@ import { loadSettings, applyTheme } from './lib/settings';
 const qc = new QueryClient();
 
 function Shell() {
-  const { view, theme, seed, set } = useStore();
+  const { view, theme, seed, variant, set } = useStore();
   useEffect(() => {
     loadSettings().then(({ settings, reset }) => {
-      set({ theme: settings.theme, seed: settings.seed });
+      set({ theme: settings.theme, seed: settings.seed, variant: settings.variant });
       if (reset) console.warn('settings reset to defaults');
     });
   }, [set]);
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => applyTheme(seed, resolveTheme(theme, mq.matches));
+    const apply = () => applyTheme(seed, resolveTheme(theme, mq.matches), variant);
     apply();
     mq.addEventListener?.('change', apply);
     return () => mq.removeEventListener?.('change', apply);
-  }, [theme, seed]);
+  }, [theme, seed, variant]);
   return (
     <div className="app-shell">
       <header className="topbar">

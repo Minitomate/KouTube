@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
-import { loadSettings, saveSettings, SEEDS, type Settings } from '../lib/settings';
+import { loadSettings, saveSettings, SEEDS, VARIANTS, type Settings } from '../lib/settings';
 import { isTauri, pickFolder, getRecentLogs } from '../lib/desktop';
 
 export default function Settings() {
@@ -24,6 +24,7 @@ export default function Settings() {
     await saveSettings(next);
     if (patch.theme) set({ theme: patch.theme });
     if (patch.seed) set({ seed: patch.seed });
+    if (patch.variant) set({ variant: patch.variant });
   }
 
   async function chooseFolder() {
@@ -100,12 +101,19 @@ export default function Settings() {
             <button
               key={s.name}
               className="chip tonal swatch"
-              aria-pressed={settings.seed.toLowerCase() === s.primary.toLowerCase()}
+              aria-pressed={settings.seed.toLowerCase() === s.seed.toLowerCase()}
               aria-label={`Theme color ${s.name}`}
-              onClick={() => update({ seed: s.primary })}
+              onClick={() => update({ seed: s.seed })}
             >
-              <span className="dot" style={{ background: s.primary }} aria-hidden="true" />
+              <span className="dot" style={{ background: s.seed }} aria-hidden="true" />
               {s.name}
+            </button>
+          ))}
+        </div>
+        <div className="segmented" role="group" aria-label="Theme style" style={{ marginTop: 12 }}>
+          {VARIANTS.map((v) => (
+            <button key={v.id} aria-pressed={settings.variant === v.id} onClick={() => update({ variant: v.id })}>
+              {v.label}
             </button>
           ))}
         </div>

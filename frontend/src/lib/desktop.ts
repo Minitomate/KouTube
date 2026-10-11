@@ -29,12 +29,15 @@ export async function desktopResolve(url: string): Promise<MediaInfo> {
 
 export interface DesktopChoice {
   url: string;
+  videoId?: string;
   kind: 'video' | 'audio';
   outputContainer: string;
   quality: string;
   codec: string;
   audioTracks: string[];
   captions: string[];
+  overwrite: boolean;
+  splitKinds: boolean;
 }
 
 export interface DesktopEvent {
@@ -132,6 +135,7 @@ export async function startDesktopDownload(
   const { invoke, listen } = await tauri();
   const jobId = (await invoke('start_download', {
     url: choice.url,
+    videoId: choice.videoId ?? null,
     container: choice.kind === 'audio' ? 'mp3' : choice.outputContainer,
     quality: choice.kind === 'audio' ? 'best' : choice.quality,
     // NOTE: Tauri exposes snake_case Rust params as camelCase — do NOT
@@ -140,6 +144,8 @@ export async function startDesktopDownload(
     audioTracks: choice.audioTracks.filter((t) => t !== 'original'),
     captions: choice.captions,
     outDir,
+    overwrite: choice.overwrite,
+    splitKinds: choice.splitKinds,
   })) as string;
   const stop = await listen('dl://progress', (e) => {
     const p = e.payload as DesktopEvent;
@@ -156,6 +162,11 @@ export async function cancelDesktopDownload(jobId: string): Promise<void> {
 export async function trashDownload(path: string): Promise<void> {
   const { invoke } = await tauri();
   await invoke('trash_file', { path });
+}
+
+export async function existingOutputs(outDir: string, videoId: string): Promise<string[]> {
+  const { invoke } = await tauri();
+  return invoke('existing_outputs', { outDir, videoId }) as Promise<string[]>;
 }
 
 export async function playFile(path: string): Promise<void> {

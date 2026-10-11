@@ -23,6 +23,7 @@ const MAX_RETRIES: u32 = 3;
 #[derive(Clone, Debug)]
 pub struct DownloadSpec {
     pub url: String,
+    pub video_id: Option<String>,
     pub container: String,
     pub quality: serde_json::Value,
     pub codec: Option<String>,
@@ -30,6 +31,122 @@ pub struct DownloadSpec {
     pub captions: Vec<String>,
     pub out_dir: String,
     pub title: Option<String>,
+    pub overwrite: bool,
+    pub split_kinds: bool,
+}
+
+fn sanitize_name(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| {
+            if "<>:\"/\\|?*".contains(c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    trimmed.chars().take(120).collect()
+}
+
+fn codec_label(codec: &Option<String>) -> Option<&'static str> {
+    match codec.as_deref() {
+        Some("avc") => Some("AVC"),
+        Some("hevc") => Some("HEVC"),
+        Some("vp9") => Some("VP9"),
+        Some("av1") => Some("AV1"),
+        _ => None,
+    }
+}
+
+const AUDIO_ONLY: [&str; 5] = ["mp3", "m4a", "opus", "wav", "flac"];
+
+/// Post-download: rename to quality/codec (video) or language (audio) tags
+/// and move sidecar subs into Captions/ when splitting. Returns final path.
+async fn finalize_file(spec: &DownloadSpec, path: Option<String>) -> Option<String> {
+    let path = path?;
+    let src = std::path::Path::new(&path);
+    let parent = src.parent()?.to_path_buf();
+    let ext = src.extension()?.to_string_lossy().to_string();
+    let stem = src.file_stem()?.to_string_lossy().to_string();
+    let tag = if AUDIO_ONLY.contains(&spec.container.as_str()) {
+        spec.audio_tracks
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "original".to_string())
+    } else {
+        let q = spec
+            .quality
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                spec.quality
+                    .as_u64()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default()
+            });
+        let q = if q == "best" || q.is_empty() {
+            "best".to_string()
+        } else {
+            format!("{q}p")
+        };
+        match codec_label(&spec.codec) {
+            Some(c) => format!("{q}-{c}"),
+            None => q,
+        }
+    };
+    let final_name = sanitize_name(&format!("{stem} [{tag}].{ext}"));
+    let final_path = parent.join(&final_name);
+    let final_str = match std::fs::rename(&src, &final_path) {
+        Ok(()) => final_path.to_string_lossy().to_string(),
+        Err(_) => path,
+    };
+    if spec.split_kinds && !spec.captions.is_empty() {
+        let cap_dir = parent.join("Captions");
+        let _ = std::fs::create_dir_all(&cap_dir);
+        if let Ok(entries) = std::fs::read_dir(&parent) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                let is_sub = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e == "srt" || e == "vtt");
+                let same_video = match (&spec.video_id, p.file_name().and_then(|n| n.to_str())) {
+                    (Some(id), Some(name)) => name.contains(id.as_str()),
+                    _ => false,
+                };
+                if is_sub && same_video {
+                    if let Some(name) = p.file_name() {
+                        let _ = std::fs::rename(&p, cap_dir.join(name));
+                    }
+                }
+            }
+        }
+    }
+    Some(final_str)
+}
+
+/// List existing outputs mentioning a video id (overwrite pre-check).
+pub async fn existing_outputs(out_dir: &str, video_id: &str) -> Vec<String> {
+    let mut out = vec![];
+    if video_id.is_empty() {
+        return out;
+    }
+    if let Ok(entries) = std::fs::read_dir(out_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    if name.contains(video_id) {
+                        out.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 #[derive(Clone, Debug, Default)]
@@ -338,9 +455,11 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
             caps.push(serde_json::json!({ "lang": lang, "label": lang }));
         }
     }
-    // Audio tracks grouped by language; first = original default.
+    // Audio tracks grouped by language. Original is detected via the
+    // `format_note` "original" marker (maintainer recipe), falling back to
+    // the first track. Exact-duplicate (lang) rows collapse into one.
     let mut seen_lang = std::collections::HashSet::new();
-    let mut tracks = vec![];
+    let mut tracks: Vec<serde_json::Value> = vec![];
     let empty = vec![];
     let candidates: Vec<&serde_json::Value> = info
         .get("requested_formats")
@@ -355,11 +474,31 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
             .and_then(|v| v.as_str())
             .unwrap_or("und")
             .to_string();
-        if seen_lang.insert(lang.clone()) {
-            tracks.push(
-                serde_json::json!({ "lang": lang, "label": lang, "is_default": tracks.is_empty() }),
-            );
+        if !seen_lang.insert(lang.clone()) {
+            continue;
         }
+        let marked = f
+            .get("format_note")
+            .and_then(|v| v.as_str())
+            .is_some_and(|n| n.to_lowercase().contains("original"));
+        tracks.push(serde_json::json!({ "lang": lang, "label": lang, "marked_original": marked }));
+    }
+    let any_marked = tracks.iter().any(|t| {
+        t.get("marked_original")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    });
+    for (i, t) in tracks.iter_mut().enumerate() {
+        let is_original = t
+            .get("marked_original")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || (!any_marked && i == 0);
+        t.as_object_mut().map(|o| {
+            o.remove("marked_original");
+            o.insert("is_default".to_string(), serde_json::json!(is_original));
+            o.insert("is_original".to_string(), serde_json::json!(is_original));
+        });
     }
     serde_json::json!({
         "videoId": info.get("id"), "title": info.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -381,8 +520,6 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
 // ---------------------------------------------------------------------------
 // download
 // ---------------------------------------------------------------------------
-
-const AUDIO_ONLY: [&str; 5] = ["mp3", "m4a", "opus", "wav", "flac"];
 
 /// Map UI codec names to yt-dlp vcodec matchers. `^=` is a prefix match;
 /// HEVC needs alternation (hev1/hev* and hvc1 both occur in the wild).
@@ -490,6 +627,9 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
             "--embed-subs".to_string(),
         ]);
     }
+    if spec.overwrite {
+        args.push("--force-overwrites".to_string());
+    }
     args.push(spec.url.clone());
     Ok(args)
 }
@@ -559,6 +699,7 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                     .await
                     .get(&job_id)
                     .and_then(|h| h.view.note.clone());
+                let final_path = finalize_file(&spec, done_path).await;
                 finish(
                     &app,
                     &job_id,
@@ -566,7 +707,7 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                         status: "done".into(),
                         percent: 100.0,
                         title: spec.title.clone(),
-                        filepath: done_path,
+                        filepath: final_path,
                         note,
                         ..Default::default()
                     },
@@ -1016,6 +1157,65 @@ mod tests {
         ));
         assert!(!is_skip_line("[download]  12.3% of ~ 4.56MiB"));
         assert!(!is_skip_line("ERROR: video unavailable"));
+    }
+
+    #[test]
+    fn sanitize_strips_illegal_chars() {
+        assert_eq!(sanitize_name("a/b\\c:d*e?\"f<g>h|i"), "a_b_c_d_e__f_g_h_i");
+        assert_eq!(sanitize_name("  name.. "), "name");
+    }
+
+    #[test]
+    fn codec_label_maps_names() {
+        assert_eq!(codec_label(&Some("avc".to_string())), Some("AVC"));
+        assert_eq!(codec_label(&Some("hevc".to_string())), Some("HEVC"));
+        assert_eq!(codec_label(&None), None);
+        assert_eq!(codec_label(&Some("auto".to_string())), None);
+    }
+
+    #[test]
+    fn original_detected_via_format_note_marker() {
+        let info = serde_json::json!({
+            "id": "abc", "title": "t",
+            "requested_formats": [],
+            "formats": [
+                { "language": "en", "format_note": "dubbed" },
+                { "language": "de", "format_note": "Original soundtrack" },
+            ],
+        });
+        let payload = build_resolve_payload(&info, None);
+        let tracks = payload.get("audioTracks").unwrap().as_array().unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(
+            tracks[1].get("is_original").unwrap(),
+            &serde_json::json!(true)
+        );
+        assert_eq!(
+            tracks[0].get("is_original").unwrap(),
+            &serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn original_falls_back_to_first_track() {
+        let info = serde_json::json!({
+            "id": "abc", "title": "t",
+            "requested_formats": [],
+            "formats": [
+                { "language": "en" },
+                { "language": "de" },
+            ],
+        });
+        let payload = build_resolve_payload(&info, None);
+        let tracks = payload.get("audioTracks").unwrap().as_array().unwrap();
+        assert_eq!(
+            tracks[0].get("is_original").unwrap(),
+            &serde_json::json!(true)
+        );
+        assert_eq!(
+            tracks[1].get("is_original").unwrap(),
+            &serde_json::json!(false)
+        );
     }
 }
 

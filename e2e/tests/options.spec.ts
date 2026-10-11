@@ -77,7 +77,7 @@ test.describe('container and codec options', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await app.pickAudioTrack('en');
+    // Inspect auto-selects the original track (en); adding es makes two.
     await app.pickAudioTrack('es');
     await app.download();
     await expect(page.getByText(/Merging to MKV/)).toBeVisible({ timeout: 15_000 });

@@ -39,12 +39,13 @@ describe('desktop adapter', () => {
     invokeMock.mockResolvedValue('job-1');
     listenMock.mockResolvedValue(() => {});
     await startDesktopDownload(
-      { url: 'https://www.youtube.com/watch?v=x', kind: 'audio', outputContainer: 'mp3', quality: 'best', codec: 'auto', audioTracks: ['original'], captions: ['en'] },
+      { url: 'https://www.youtube.com/watch?v=x', videoId: 'x', kind: 'audio', outputContainer: 'mp3', quality: 'best', codec: 'auto', audioTracks: ['original'], captions: ['en'], overwrite: false, splitKinds: false },
       '/tmp/out',
       () => {},
     );
     expect(invokeMock).toHaveBeenCalledWith('start_download', {
       url: 'https://www.youtube.com/watch?v=x',
+      videoId: 'x',
       container: 'mp3',
       quality: 'best',
       // Tauri exposes snake_case Rust params as camelCase: assert exact keys.
@@ -52,6 +53,8 @@ describe('desktop adapter', () => {
       audioTracks: [],
       captions: ['en'],
       outDir: '/tmp/out',
+      overwrite: false,
+      splitKinds: false,
     });
   });
 
@@ -64,7 +67,7 @@ describe('desktop adapter', () => {
     });
     const seen: string[] = [];
     await startDesktopDownload(
-      { url: 'u', kind: 'video', outputContainer: 'mkv', quality: '720', codec: 'avc', audioTracks: ['en', 'de'], captions: [] },
+      { url: 'u', videoId: 'u', kind: 'video', outputContainer: 'mkv', quality: '720', codec: 'avc', audioTracks: ['en', 'de'], captions: [], overwrite: false, splitKinds: false },
       '/tmp',
       (e) => seen.push(e.status),
     );

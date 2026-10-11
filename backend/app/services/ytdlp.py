@@ -67,17 +67,20 @@ def filter_manual_captions(info: dict) -> list[CaptionTrack]:
 
 
 def group_audio_tracks(info: dict) -> list[AudioTrack]:
-    """Group requested_formats/formats audio streams by language; first = original default."""
+    """Group audio streams by language; original via format_note marker, else first."""
     seen: dict[str, AudioTrack] = {}
     candidates = list(info.get("requested_formats") or []) + list(info.get("formats") or [])
     for f in candidates:
         lang = (f.get("language") or "").strip() or "und"
+        marked = "original" in (f.get("format_note") or "").lower()
         if lang not in seen:
-            seen[lang] = AudioTrack(lang=lang, label=lang, is_default=False)
+            seen[lang] = AudioTrack(lang=lang, label=lang, is_default=False, is_original=marked)
+        elif marked:
+            seen[lang].is_original = True
     tracks = list(seen.values())
-    if tracks:
-        # 'und' or first track is the original
+    if tracks and not any(t.is_original for t in tracks):
         tracks[0].is_default = True
+        tracks[0].is_original = True
     try:
         import pycountry  # nicer labels when available
         for t in tracks:

@@ -25,6 +25,7 @@ class AudioTrack(BaseModel):
     lang: str
     label: str
     is_default: bool = False
+    is_original: bool = False
 
 
 class CaptionTrack(BaseModel):

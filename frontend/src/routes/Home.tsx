@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore, blankTransfer, tlog, effectiveQuality, type Transfer } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA } from '../lib/transfer';
-import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent, pctRate } from '../lib/desktop';
+import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent, pctRate, existingOutputs } from '../lib/desktop';
 import { loadSettings, saveSettings } from '../lib/settings';
+import Confirm from '../components/Confirm';
 import UrlBar from '../components/UrlBar';
 import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
@@ -24,6 +25,7 @@ export default function Home() {
   const rateSamples = useRef(new Map<string, Array<{ t: number; p: number }>>());
   const batchCancelled = useRef(false);
   const [canCancel, setCanCancel] = useState(false);
+  const [overwriteAsk, setOverwriteAsk] = useState<{ files: string[]; outDir: string; splitKinds: boolean } | null>(null);
 
   // Connectivity: navigator flag + lightweight probe; banner blocks starts.
   // Generation-tagged: a slow probe must never override a fresher event.
@@ -87,16 +89,20 @@ export default function Home() {
   }
 
   /** Effective container/quality/notes from codec availability + rules. */
-  function planDownload(): { quality: string; container: string; notes: string[] } {
+  function planDownload(): { quality: string; container: string; notes: string[]; blocked?: string } {
     const notes: string[] = [];
     let cont: string = format === 'audio' ? 'mp3' : container;
     let q = quality;
+    if (format === 'audio' && audioTracks.length === 0) {
+      return { quality: q, container: cont, notes, blocked: 'Select at least one audio track for audio mode.' };
+    }
     if (format === 'video' && media && !media.isPlaylist) {
       const eff = effectiveQuality(media.formatCodecs, quality, codec);
       if (eff.note) notes.push(eff.note);
       q = eff.quality;
-      const dubs = audioTracks.filter((t) => t !== 'original');
-      if (dubs.length > 1 && cont === 'mp4') {
+      if (media.audioTracks.length === 0) {
+        notes.push('No audio tracks found — saving video-only.');
+      } else if (audioTracks.length > 1 && cont === 'mp4') {
         cont = 'mkv';
         notes.push('Merging to MKV: multiple audio tracks cannot go in MP4.');
       }
@@ -155,6 +161,8 @@ export default function Home() {
   async function download() {
     if (!url) { setError('Paste a YouTube URL first.'); return; }
     if (!online) { setError('You are offline. Reconnect to download.'); return; }
+    const gate = planDownload();
+    if (gate.blocked) { setError(gate.blocked); return; }
     setError('');
     setWarn('');
     if (isTauri()) {
@@ -260,10 +268,12 @@ export default function Home() {
     title: string,
     outDir: string,
     transferId: string,
+    extra?: { videoId?: string; overwrite?: boolean; splitKinds?: boolean },
   ): Promise<void> {
     const put = (t: Parameters<typeof upsertTransfer>[0]) => upsertTransfer(tlog(t, t.stage));
     put({ ...blankTransfer(transferId, title), note: 'folder ok, starting' });
     const plan = planDownload();
+    if (plan.blocked) { setError(plan.blocked); return; }
     if (plan.notes.length) setWarn(plan.notes.join(' '));
     // Resolves only on terminal events so playlist items run sequentially.
     let stopFn = () => {};
@@ -279,8 +289,9 @@ export default function Home() {
     };
     startDesktopDownload(
       {
-        url: pageUrl, kind: format, outputContainer: plan.container,
+        url: pageUrl, videoId: extra?.videoId ?? media?.videoId, kind: format, outputContainer: plan.container,
         quality: plan.quality, codec, audioTracks, captions,
+        overwrite: extra?.overwrite ?? false, splitKinds: extra?.splitKinds ?? false,
       },
       outDir,
       (e) => {
@@ -318,7 +329,7 @@ export default function Home() {
     await done;
   }
 
-  async function downloadDesktop() {
+  async function downloadDesktop(overwrite = false) {
     try {
       await ensureDesktopTools();
     } catch (e) {
@@ -328,8 +339,10 @@ export default function Home() {
       return;
     }
     let outDir: string;
+    let splitKinds = false;
     try {
       const { settings } = await loadSettings();
+      splitKinds = settings.splitKinds;
       outDir = settings.outDir || await resolveOutDir();
       if (settings.splitKinds) {
         outDir = `${outDir.replace(/[/\\]$/, '')}/${format === 'audio' ? 'Audio' : 'Video'}`;
@@ -338,6 +351,16 @@ export default function Home() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No folder selected');
       return;
+    }
+    // Overwrite pre-check: single videos only, skip when already confirmed.
+    if (!overwrite && !media?.isPlaylist && media?.videoId && isTauri()) {
+      try {
+        const existing = await existingOutputs(outDir, media.videoId);
+        if (existing.length) {
+          setOverwriteAsk({ files: existing, outDir, splitKinds });
+          return;
+        }
+      } catch { /* pre-check is best-effort; download proceeds */ }
     }
     setBusy(true);
     batchCancelled.current = false;
@@ -350,14 +373,14 @@ export default function Home() {
           if (batchCancelled.current) break;
           const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
           try {
-            await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`);
+            await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`, { videoId: e.videoId, overwrite, splitKinds });
           } catch (err) {
             setError(err instanceof Error ? err.message : 'Item failed');
           }
         }
       } else {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        await downloadDesktopOne(url, media?.title ?? url, outDir, id);
+        await downloadDesktopOne(url, media?.title ?? url, outDir, id, { videoId: media?.videoId, overwrite, splitKinds });
       }
       set({ step: 2 });
     } catch (e) {
@@ -411,10 +434,32 @@ export default function Home() {
       )}
       <div className="field-error" role="alert">{error}</div>
       {warn && <div className="meta" role="note">{warn}</div>}
+      {overwriteAsk && (
+        <Confirm
+          title="File already exists"
+          body="This video was downloaded before. Download again and overwrite?"
+          items={overwriteAsk.files}
+          confirmLabel="Overwrite"
+          onConfirm={() => { setOverwriteAsk(null); void downloadDesktop(true); }}
+          onCancel={() => setOverwriteAsk(null)}
+        />
+      )}
       <div className="sticky-cta">
         <div>
-          <button className="pill-btn filled" onClick={download} disabled={busy || !url} aria-label={media?.isPlaylist ? 'Download ZIP' : 'Download'}>
-            {busy ? 'Working…' : media?.isPlaylist ? 'Download ZIP' : 'Download'}
+          <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url} aria-label={media?.isPlaylist ? 'Download ZIP' : 'Download'}>
+            {(() => {
+              const active = queue.find((q) => q.status === 'working');
+              if (!busy || !active) return media?.isPlaylist ? 'Download ZIP' : 'Download';
+              const raw = active.total ? Math.round((active.loaded / active.total) * 100) : null;
+              const pct = raw === null ? null : Math.min(100, raw);
+              const label = pct === null ? (active.note ?? 'Working…') : `${pct}%${active.note ? ` · ${active.note}` : ''}`;
+              return (
+                <>
+                  {pct !== null && <span className="cta-fill" style={{ width: `${pct}%` }} aria-hidden="true" />}
+                  <span className="cta-label">{label}</span>
+                </>
+              );
+            })()}
           </button>
           {busy && canCancel && (
             <button className="pill-btn outlined" onClick={cancel} aria-label="Cancel download">

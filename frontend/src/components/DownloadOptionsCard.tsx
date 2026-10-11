@@ -72,11 +72,11 @@ export default function DownloadOptionsCard() {
       )}
       <MultiDropdown
         label="Audio tracks"
-        options={[{ id: 'original', label: 'Original' }, ...tracks.map((t) => ({ id: t.id, label: t.label }))]}
+        options={tracks.map((t) => ({ id: t.id, label: t.label, badge: t.original ? 'Original' : undefined }))}
         selected={audioTracks}
         onToggle={toggleAudioTrack}
         emptyText="No dubbed tracks for this video."
-        summaryNone="Original only"
+        summaryNone="No audio"
       />
       <MultiDropdown
         label="Captions"

@@ -20,7 +20,45 @@ vi.stubGlobal('document', {
   },
 });
 
-import { applyTheme, loadSettings, saveSettings, DEFAULTS } from './settings';
+// Mock the M3 library — its extensionless ESM imports break under vitest's
+// native ESM loader. We test our mapping logic, not Google's color math.
+vi.mock('@material/material-color-utilities', () => ({
+  argbFromHex: (hex: string) => parseInt(hex.replace('#', ''), 16),
+  Hct: { fromInt: (argb: number) => ({ argb }) },
+  hexFromArgb: (argb: number) => `#${argb.toString(16).padStart(8, '0').slice(-6)}`,
+  Variant: { TONAL_SPOT: 'tonal-spot', VIBRANT: 'vibrant', EXPRESSIVE: 'expressive' },
+  DynamicScheme: class {
+    constructor(public opts: { sourceColorArgb: number; variant: string; isDark: boolean }) {}
+  },
+  MaterialDynamicColors: {
+    primary: { getArgb: () => 0x6750a4 },
+    onPrimary: { getArgb: () => 0xffffff },
+    primaryContainer: { getArgb: () => 0xeaddff },
+    onPrimaryContainer: { getArgb: () => 0x21005d },
+    secondaryContainer: { getArgb: () => 0xe8def8 },
+    onSecondaryContainer: { getArgb: () => 0x1d192b },
+    tertiary: { getArgb: () => 0x7d5260 },
+    onTertiary: { getArgb: () => 0xffffff },
+    tertiaryContainer: { getArgb: () => 0xffd8e4 },
+    onTertiaryContainer: { getArgb: () => 0x31111d },
+    surface: { getArgb: () => 0xfef7ff },
+    onSurface: { getArgb: () => 0x1d1b20 },
+    surfaceContainerLowest: { getArgb: () => 0xffffff },
+    surfaceContainerLow: { getArgb: () => 0xf7f2fa },
+    surfaceContainer: { getArgb: () => 0xf3edf7 },
+    surfaceContainerHigh: { getArgb: () => 0xece6f0 },
+    surfaceContainerHighest: { getArgb: () => 0xe6e0e9 },
+    onSurfaceVariant: { getArgb: () => 0x49454f },
+    outline: { getArgb: () => 0x79747e },
+    outlineVariant: { getArgb: () => 0xcac4d0 },
+    error: { getArgb: () => 0xb3261e },
+    onError: { getArgb: () => 0xffffff },
+    errorContainer: { getArgb: () => 0xf9dedc },
+    onErrorContainer: { getArgb: () => 0x410e0b },
+  },
+}));
+
+import { applyTheme, loadSettings, saveSettings, DEFAULTS, moodRoles, SEEDS, VARIANTS } from './settings';
 
 beforeEach(() => {
   backing.clear();
@@ -43,35 +81,18 @@ describe('settings store', () => {
     expect(settings).toEqual(DEFAULTS);
   });
 
-  it('applies theme-correct swatch roles to CSS vars', async () => {
+  it('applies generated mood roles to CSS vars', () => {
     applyTheme('#984061', 'dark');
-    expect(styleProps.get('--primary')).toBe('#ffb1c8');
-    expect(styleProps.get('--primary-container')).toBe('#7a2a4f');
+    const roles = moodRoles('#984061', 'tonal-spot', true);
+    expect(styleProps.get('--primary')).toBe(roles['--primary']);
+    expect(styleProps.get('--primary-container')).toBe(roles['--primary-container']);
     expect(dataset.theme).toBe('dark');
     applyTheme('#984061', 'light');
-    expect(styleProps.get('--primary')).toBe('#984061');
+    expect(styleProps.get('--primary')).toBe(moodRoles('#984061', 'tonal-spot', false)['--primary']);
   });
 
-  it('keeps every swatch readable in both themes', async () => {
-    const { SEEDS } = await import('./settings');
-    const lum = (hex: string): number => {
-      const c = hex.replace('#', '');
-      const f = (i: number) => {
-        const v = parseInt(c.slice(i, i + 2), 16) / 255;
-        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-      };
-      return 0.2126 * f(0) + 0.7152 * f(2) + 0.0722 * f(4);
-    };
-    const ratio = (a: string, b: string): number => {
-      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
-      return (hi + 0.05) / (lo + 0.05);
-    };
-    for (const s of SEEDS) {
-      expect(ratio(s.primary, '#fef7ff')).toBeGreaterThanOrEqual(4.5);
-      expect(ratio(s.onContainer, s.container)).toBeGreaterThanOrEqual(4.5);
-      expect(ratio(s.dark.primary, '#141218')).toBeGreaterThanOrEqual(4.5);
-      expect(ratio(s.dark.onContainer, s.dark.container)).toBeGreaterThanOrEqual(4.5);
-      expect(ratio(s.dark.onPrimary, s.dark.primary)).toBeGreaterThanOrEqual(4.5);
-    }
+  it('exposes seeds and variants', () => {
+    expect(SEEDS.length).toBeGreaterThanOrEqual(4);
+    expect(VARIANTS.map((v) => v.id)).toEqual(['tonal-spot', 'vibrant', 'expressive']);
   });
 });

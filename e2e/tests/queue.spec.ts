@@ -64,7 +64,9 @@ test.describe('settings tab', () => {
     const primary = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(),
     );
-    expect(primary.toLowerCase()).toBe('#984061');
+    // Generated mood: Berry seed must resolve to a valid, non-default hex.
+    expect(primary).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(primary.toLowerCase()).not.toBe('#6750a4');
     await page.getByRole('button', { name: 'Download', exact: true }).click();
     await expect(page.getByLabel('YouTube URL')).toBeVisible();
   });

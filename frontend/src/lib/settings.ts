@@ -1,37 +1,92 @@
 // Settings: Tauri store plugin on desktop, localStorage mirror for web.
 // zod-validated; corrupt stores reset to defaults loudly.
 import { z } from 'zod';
+import {
+  argbFromHex,
+  DynamicScheme,
+  Hct,
+  hexFromArgb,
+  MaterialDynamicColors as MDC,
+  Variant,
+} from '@material/material-color-utilities';
 
 export const SettingsSchema = z.object({
   outDir: z.string().nullable().default(null),
   splitKinds: z.boolean().default(false),
   theme: z.enum(['light', 'dark', 'auto']).default('auto'),
   seed: z.string().default('#6750A4'),
+  variant: z.enum(['tonal-spot', 'vibrant', 'expressive']).default('tonal-spot'),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
+export type MoodVariant = Settings['variant'];
 
 export const DEFAULTS: Settings = SettingsSchema.parse({});
 
-export interface SeedRoles {
+export interface SeedSwatch {
   name: string;
-  primary: string; onPrimary: string; container: string; onContainer: string;
-  dark: { primary: string; onPrimary: string; container: string; onContainer: string };
+  seed: string;
 }
 
-export const SEEDS: SeedRoles[] = [
-  { name: 'Grape', primary: '#6750A4', onPrimary: '#ffffff', container: '#EADDFF', onContainer: '#21005D',
-    dark: { primary: '#D0BCFF', onPrimary: '#381E72', container: '#4F378B', onContainer: '#EADDFF' } },
-  { name: 'Berry', primary: '#984061', onPrimary: '#ffffff', container: '#ffd9e3', onContainer: '#3e001d',
-    dark: { primary: '#ffb1c8', onPrimary: '#5b0e28', container: '#7a2a4f', onContainer: '#ffd9e3' } },
-  { name: 'Forest', primary: '#4d6646', onPrimary: '#ffffff', container: '#d3f1c8', onContainer: '#0a2005',
-    dark: { primary: '#b9cfae', onPrimary: '#1d3520', container: '#3d4f3a', onContainer: '#d3f1c8' } },
-  { name: 'Ocean', primary: '#0061a4', onPrimary: '#ffffff', container: '#d1e4ff', onContainer: '#001d35',
-    dark: { primary: '#adc6ff', onPrimary: '#002e69', container: '#004b87', onContainer: '#d1e4ff' } },
-  { name: 'Ember', primary: '#8a4e00', onPrimary: '#ffffff', container: '#ffdcbd', onContainer: '#2c1600',
-    dark: { primary: '#ffb86b', onPrimary: '#2c1600', container: '#5c2d00', onContainer: '#ffdcbd' } },
-  { name: 'Teal', primary: '#00696b', onPrimary: '#ffffff', container: '#6ff7f9', onContainer: '#002021',
-    dark: { primary: '#7ddad9', onPrimary: '#002021', container: '#004f51', onContainer: '#6ff7f9' } },
+export const SEEDS: SeedSwatch[] = [
+  { name: 'Grape', seed: '#6750A4' },
+  { name: 'Berry', seed: '#984061' },
+  { name: 'Forest', seed: '#4d6646' },
+  { name: 'Ocean', seed: '#0061a4' },
+  { name: 'Ember', seed: '#8a4e00' },
+  { name: 'Teal', seed: '#00696b' },
 ];
+
+export const VARIANTS: Array<{ id: MoodVariant; label: string }> = [
+  { id: 'tonal-spot', label: 'Tonal Spot' },
+  { id: 'vibrant', label: 'Vibrant' },
+  { id: 'expressive', label: 'Expressive' },
+];
+
+function toVariant(v: MoodVariant): Variant {
+  switch (v) {
+    case 'vibrant': return Variant.VIBRANT;
+    case 'expressive': return Variant.EXPRESSIVE;
+    default: return Variant.TONAL_SPOT;
+  }
+}
+
+/** Full M3 mood from a seed: every role the app consumes, both modes. */
+export function moodRoles(seed: string, variant: MoodVariant, dark: boolean): Record<string, string> {
+  const scheme = new DynamicScheme({
+    sourceColorHct: Hct.fromInt(argbFromHex(seed.startsWith('#') ? seed : `#${seed}`)),
+    variant: toVariant(variant),
+    contrastLevel: 0,
+    isDark: dark,
+  });
+  const hex = (c: { getArgb: (s: typeof scheme) => number }) => hexFromArgb(c.getArgb(scheme));
+  return {
+    '--primary': hex(MDC.primary),
+    '--on-primary': hex(MDC.onPrimary),
+    '--primary-container': hex(MDC.primaryContainer),
+    '--on-primary-container': hex(MDC.onPrimaryContainer),
+    '--secondary-container': hex(MDC.secondaryContainer),
+    '--on-secondary-container': hex(MDC.onSecondaryContainer),
+    '--tertiary': hex(MDC.tertiary),
+    '--on-tertiary': hex(MDC.onTertiary),
+    '--tertiary-container': hex(MDC.tertiaryContainer),
+    '--on-tertiary-container': hex(MDC.onTertiaryContainer),
+    '--surface': hex(MDC.surface),
+    '--on-surface': hex(MDC.onSurface),
+    '--surface-container-lowest': hex(MDC.surfaceContainerLowest),
+    '--surface-container-low': hex(MDC.surfaceContainerLow),
+    '--surface-container': hex(MDC.surfaceContainer),
+    '--surface-container-high': hex(MDC.surfaceContainerHigh),
+    '--surface-container-highest': hex(MDC.surfaceContainerHighest),
+    '--on-surface-variant': hex(MDC.onSurfaceVariant),
+    '--outline': hex(MDC.outline),
+    '--outline-variant': hex(MDC.outlineVariant),
+    '--error': hex(MDC.error),
+    '--on-error': hex(MDC.onError),
+    '--error-container': hex(MDC.errorContainer),
+    '--on-error-container': hex(MDC.onErrorContainer),
+    '--bg': hex(MDC.surface),
+  };
+}
 
 const LS_KEY = 'koutube-settings';
 
@@ -90,29 +145,12 @@ export async function saveSettings(s: Settings): Promise<void> {
   }
 }
 
-/** Apply seed + theme to CSS vars. Presets carry full light+dark roles. */
-export function applyTheme(seed: string, theme: 'light' | 'dark'): void {
+/** Apply seed + variant + theme to CSS vars (full mood, both modes). */
+export function applyTheme(seed: string, theme: 'light' | 'dark', variant: MoodVariant = 'tonal-spot'): void {
   const root = document.documentElement;
   root.dataset.theme = theme;
-  const sw = SEEDS.find((s) => s.primary.toLowerCase() === seed.toLowerCase());
-  const roles = theme === 'dark'
-    ? sw?.dark
-    : sw ? { primary: sw.primary, onPrimary: sw.onPrimary, container: sw.container, onContainer: sw.onContainer } : undefined;
-  if (roles) {
-    root.style.setProperty('--primary', roles.primary);
-    root.style.setProperty('--on-primary', roles.onPrimary);
-    root.style.setProperty('--primary-container', roles.container);
-    root.style.setProperty('--on-primary-container', roles.onContainer);
-  } else if (theme === 'light') {
-    root.style.setProperty('--primary', seed);
-    root.style.removeProperty('--on-primary');
-    root.style.removeProperty('--primary-container');
-    root.style.removeProperty('--on-primary-container');
-  } else {
-    // Custom seed in dark mode: keep theme roles (guaranteed contrast).
-    root.style.removeProperty('--primary');
-    root.style.removeProperty('--on-primary');
-    root.style.removeProperty('--primary-container');
-    root.style.removeProperty('--on-primary-container');
+  const roles = moodRoles(seed, variant, theme === 'dark');
+  for (const [k, v] of Object.entries(roles)) {
+    root.style.setProperty(k, v);
   }
 }
