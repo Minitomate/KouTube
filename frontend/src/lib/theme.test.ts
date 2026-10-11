@@ -86,3 +86,16 @@ describe('resolveAudio', () => {
     expect(resolveAudio('opus', 'nope', '128K')).toEqual({ codec: 'opus', quality: '128K' });
   });
 });
+
+describe('applyDownloadDefaults', () => {
+  it('stamps static choices and coerces stale combos', async () => {
+    const { applyDownloadDefaults } = await import('./store');
+    expect(applyDownloadDefaults({
+      format: 'audio', quality: '720', container: 'mkv', codec: 'avc',
+      audioContainer: 'm4a', audioCodec: 'mp3', audioQuality: '256K', captionsFormat: 'vtt',
+    })).toEqual({
+      format: 'audio', quality: '720', container: 'mkv', codec: 'avc',
+      audioContainer: 'm4a', audioCodec: 'aac', audioQuality: '256K', captionsFormat: 'vtt',
+    });
+  });
+});

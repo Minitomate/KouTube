@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { MediaInfo } from './api';
+import type { DownloadDefaults } from './settings';
 
 export type Format = 'video' | 'audio' | 'captions';
 export type TransferStatus = 'working' | 'done' | 'error' | 'cancelled';
@@ -103,6 +104,21 @@ export function effectiveQuality(
     : { quality: best, note: `${CODEC_LABELS[codec]} best available: ${best}p` };
 }
 
+/** Stamp download defaults onto the store (boot + Inspect); coerces stale combos. */
+export function applyDownloadDefaults(d: DownloadDefaults) {
+  const au = resolveAudio(d.audioContainer, d.audioCodec, d.audioQuality);
+  return {
+    format: d.format,
+    quality: d.quality,
+    container: d.container,
+    codec: d.codec,
+    audioContainer: d.audioContainer,
+    audioCodec: au.codec,
+    audioQuality: d.audioQuality,
+    captionsFormat: d.captionsFormat,
+  };
+}
+
 interface State {
   step: 0 | 1 | 2;
   view: 'home' | 'settings';
@@ -124,6 +140,7 @@ interface State {
   theme: 'light' | 'dark' | 'auto';
   seed: string;
   variant: 'tonal-spot' | 'vibrant' | 'expressive';
+  showAdvanced: boolean;
   set: (p: Partial<State>) => void;
   toggleCaption: (id: string) => void;
   toggleAudioTrack: (id: string) => void;
@@ -163,6 +180,7 @@ export const useStore = create<State>((set) => ({
   theme: 'auto',
   seed: '#6750A4',
   variant: 'tonal-spot' as const,
+  showAdvanced: false,
   online: true,
   set: (p) => set(p),
   toggleCaption: (id) =>

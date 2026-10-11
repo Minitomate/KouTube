@@ -27,6 +27,11 @@ export class KouTubePage {
       .click();
   }
 
+  /** Reveal advanced controls (idempotent — safe when already expanded). */
+  async advanced() {
+    await this.page.getByRole('checkbox', { name: /show advanced/i }).check();
+  }
+
   async pickQuality(q: string) {
     // DownloadOptionsCard renders Quality as a native select.
     await this.page.getByLabel('Quality').selectOption(q);

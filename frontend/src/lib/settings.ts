@@ -10,6 +10,18 @@ import {
   Variant,
 } from '@material/material-color-utilities';
 
+export const DownloadDefaultsSchema = z.object({
+  format: z.enum(['video', 'audio', 'captions']).default('video'),
+  quality: z.string().default('best'),
+  container: z.enum(['mp4', 'webm', 'mkv']).default('mp4'),
+  codec: z.enum(['auto', 'avc', 'hevc', 'vp9', 'av1']).default('auto'),
+  audioContainer: z.enum(['mp3', 'm4a', 'opus', 'wav', 'flac']).default('mp3'),
+  audioCodec: z.string().default('mp3'),
+  audioQuality: z.enum(['best', '320K', '256K', '192K', '128K']).default('best'),
+  captionsFormat: z.enum(['srt', 'vtt']).default('srt'),
+});
+export type DownloadDefaults = z.infer<typeof DownloadDefaultsSchema>;
+
 export const SettingsSchema = z.object({
   outDir: z.string().nullable().default(null),
   splitKinds: z.boolean().default(false),
@@ -17,6 +29,8 @@ export const SettingsSchema = z.object({
   seed: z.string().default('#6750A4'),
   variant: z.enum(['tonal-spot', 'vibrant', 'expressive']).default('tonal-spot'),
   maxConcurrent: z.number().int().min(1).max(8).default(4),
+  showAdvanced: z.boolean().default(false),
+  downloadDefaults: DownloadDefaultsSchema.default({}),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 export type MoodVariant = Settings['variant'];

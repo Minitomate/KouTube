@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Home, { ThemeToggle } from './routes/Home';
 import Settings from './routes/Settings';
-import { useStore, resolveTheme } from './lib/store';
+import { useStore, resolveTheme, applyDownloadDefaults } from './lib/store';
 import { loadSettings, applyTheme } from './lib/settings';
 
 const qc = new QueryClient();
@@ -12,6 +12,8 @@ function Shell() {
   useEffect(() => {
     loadSettings().then(({ settings, reset }) => {
       set({ theme: settings.theme, seed: settings.seed, variant: settings.variant });
+      set({ showAdvanced: settings.showAdvanced });
+      set(applyDownloadDefaults(settings.downloadDefaults));
       if (reset) console.warn('settings reset to defaults');
     });
   }, [set]);

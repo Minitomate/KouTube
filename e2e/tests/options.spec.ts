@@ -44,6 +44,7 @@ test.describe('container and codec options', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
+    await app.advanced();
     await page.getByLabel('Container').selectOption('mkv');
     await page.getByLabel('Codec').selectOption('avc');
     await app.download();
@@ -78,6 +79,7 @@ test.describe('container and codec options', () => {
     await app.goto();
     await app.inspectUrl(URL);
     // Inspect auto-selects the original track (en); adding es makes two.
+    await app.advanced();
     await app.pickAudioTrack('es');
     await app.download();
     await expect(page.getByText(/Merging to MKV/)).toBeVisible({ timeout: 15_000 });
@@ -112,6 +114,7 @@ test.describe('container and codec options', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.pickFormat('audio');
+    await app.advanced();
     // en is auto-selected as original; adding es makes two tracks.
     await app.pickAudioTrack('es');
     await app.download();
@@ -143,6 +146,7 @@ test.describe('container and codec options', () => {
     await app.inspectUrl(URL);
     // Select captions in video mode, then switch: the picker hides in audio
     // mode and the stale selection must not leak into prepare.
+    await app.advanced();
     await app.pickCaptions('en - English');
     await app.pickFormat('audio');
     await expect(page.locator('[aria-labelledby="md-captions"]')).toHaveCount(0);
@@ -212,6 +216,7 @@ test.describe('container and codec options', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.pickFormat('audio');
+    await app.advanced();
     await app.pickAudioTrack('es');
     await app.download();
     // en still completes; es fails with the language named — one failure
@@ -248,10 +253,60 @@ test.describe('container and codec options', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.pickFormat('audio');
+    await app.advanced();
     await app.pickAudioTrack('es');
     await app.download();
     // Both cards exist while the first is still fetching — nothing trickles in.
     await expect(page.locator('.job')).toHaveCount(2);
     await expect(page.getByText('saved ✓')).toHaveCount(2, { timeout: 15_000 });
+  });
+});
+
+test.describe('advanced settings toggle', () => {
+  test('reveals controls and persists across reload', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await expect(page.getByLabel('Container')).toHaveCount(0);
+    await page.getByRole('checkbox', { name: /show advanced/i }).check();
+    await expect(page.getByLabel('Container')).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('checkbox', { name: /show advanced/i })).toBeChecked();
+    await expect(page.getByLabel('Container')).toBeVisible();
+  });
+
+  test('picks survive collapsing the toggle', async ({ page }) => {
+    await page.route('**/api/resolve', (r) =>
+      r.fulfill({
+        json: {
+          ...manualOnly,
+          audioTracks: [
+            { lang: 'en', label: 'English (en)' },
+            { lang: 'es', label: 'Spanish (es)' },
+          ],
+        },
+      }),
+    );
+    await page.route('**/api/prepare', (r) =>
+      r.fulfill({
+        json: {
+          filename: 'm.mkv', container: 'mkv', mergeRequired: false,
+          sizeEstimate: 4, streamToken: 's', muxToken: null, captions: [],
+        },
+      }),
+    );
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: 'data', contentType: 'video/mp4' }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await page.getByRole('checkbox', { name: /show advanced/i }).check();
+    await app.pickAudioTrack('es');
+    await page.getByRole('checkbox', { name: /show advanced/i }).uncheck();
+    await app.download();
+    // en (default) + es (kept through collapse) still triggers the MKV note.
+    await expect(page.getByText(/Merging to MKV/)).toBeVisible({ timeout: 15_000 });
   });
 });

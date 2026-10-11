@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { z } from 'zod';
-import { useStore } from '../lib/store';
+import { useStore, applyDownloadDefaults } from '../lib/store';
 import { api } from '../lib/api';
+import { loadSettings } from '../lib/settings';
 import { isTauri, desktopResolve, ensureDesktopTools, inspectFailedMessage, readClipboardText } from '../lib/desktop';
 import type { MediaInfo } from '../lib/api';
 
@@ -34,6 +35,15 @@ export default function UrlBar() {
     setError('');
     setLoading(true);
     set({ inspecting: true });
+    // Static download defaults; a failed load keeps the current card values.
+    const loadDefaults = async () => {
+      try {
+        const { settings } = await loadSettings();
+        return applyDownloadDefaults(settings.downloadDefaults);
+      } catch {
+        return {};
+      }
+    };
     try {
       if (isTauri()) {
         try {
@@ -45,10 +55,10 @@ export default function UrlBar() {
           return;
         }
         const media = await desktopResolve(value);
-        set({ url: value, media, step: 1, audioTracks: defaultAudio(media) });
+        set({ url: value, media, step: 1, audioTracks: defaultAudio(media), ...(await loadDefaults()) });
       } else {
         const media = await api.resolve(value);
-        set({ url: value, media, step: 1, audioTracks: defaultAudio(media) });
+        set({ url: value, media, step: 1, audioTracks: defaultAudio(media), ...(await loadDefaults()) });
       }
     } catch {
       setError(inspectFailedMessage(isTauri()));

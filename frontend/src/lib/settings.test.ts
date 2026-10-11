@@ -74,6 +74,28 @@ describe('settings store', () => {
     expect(settings.splitKinds).toBe(true);
   });
 
+  it('round-trips download defaults and the advanced toggle', async () => {
+    await saveSettings({
+      ...DEFAULTS,
+      showAdvanced: true,
+      downloadDefaults: {
+        ...DEFAULTS.downloadDefaults, format: 'audio', audioContainer: 'flac', captionsFormat: 'vtt',
+      },
+    });
+    const { settings, reset } = await loadSettings();
+    expect(reset).toBe(false);
+    expect(settings.showAdvanced).toBe(true);
+    expect(settings.downloadDefaults.format).toBe('audio');
+    expect(settings.downloadDefaults.audioContainer).toBe('flac');
+    expect(settings.downloadDefaults.captionsFormat).toBe('vtt');
+  });
+
+  it('defaults the new fields on old stores', () => {
+    expect(DEFAULTS.showAdvanced).toBe(false);
+    expect(DEFAULTS.downloadDefaults.format).toBe('video');
+    expect(DEFAULTS.maxConcurrent).toBe(4);
+  });
+
   it('resets corrupt stores loudly', async () => {
     backing.set('koutube-settings', '{not json');
     const { settings, reset } = await loadSettings();

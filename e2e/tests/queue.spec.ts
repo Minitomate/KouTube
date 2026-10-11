@@ -85,4 +85,30 @@ test.describe('settings tab', () => {
     await page.getByRole('button', { name: 'Fewer concurrent downloads' }).click();
     await expect(page.getByLabel('4 concurrent downloads')).toBeVisible();
   });
+
+  test('download defaults apply on next inspect', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const app = new KouTubePage(page);
+    await app.goto();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Default download' })).toBeVisible();
+    await page.getByLabel('Quality').selectOption('720');
+    await page.getByLabel('Container').selectOption('mkv');
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    await app.inspectUrl(URL);
+    await page.getByRole('checkbox', { name: /show advanced/i }).check();
+    await expect(page.getByLabel('Quality')).toHaveValue('720');
+    await expect(page.getByLabel('Container')).toHaveValue('mkv');
+  });
+
+  test('default format applies on next inspect', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const app = new KouTubePage(page);
+    await app.goto();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByLabel('Audio format').click();
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    await app.inspectUrl(URL);
+    await expect(page.getByText(/Audio only — no captions/)).toBeVisible();
+  });
 });

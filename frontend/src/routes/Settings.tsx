@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
 import { loadSettings, saveSettings, SEEDS, VARIANTS, type Settings } from '../lib/settings';
+import { QUALITIES } from '../lib/store';
 import { isTauri, pickFolder, getRecentLogs } from '../lib/desktop';
+import PreferenceFields from '../components/PreferenceFields';
 
 export default function Settings() {
   const { set, queue } = useStore();
@@ -99,6 +101,17 @@ export default function Settings() {
           </div>
           <span className="meta" aria-live="polite" aria-label={`${settings.maxConcurrent} concurrent downloads`}>{settings.maxConcurrent}</span>
         </div>
+      </div>
+      <div className="card">
+        <h2>Default download</h2>
+        <p className="meta">Applied to the options card on every Inspect.</p>
+        <PreferenceFields
+          value={settings.downloadDefaults}
+          onChange={(p) => update({ downloadDefaults: { ...settings.downloadDefaults, ...p } })}
+          qualities={[...QUALITIES].reverse()}
+          desktop={isTauri()}
+          advanced
+        />
       </div>
       <div className="card">
         <h2>Appearance</h2>

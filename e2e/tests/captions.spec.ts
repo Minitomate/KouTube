@@ -5,6 +5,7 @@ import manualOnly from '../fixtures/resolve-manual-only.json' with { type: 'json
 const URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
 async function openCaptions(page: Page) {
+  await page.getByRole('checkbox', { name: /show advanced/i }).check();
   await page.locator('[aria-labelledby="md-captions"]').click();
 }
 
@@ -14,8 +15,8 @@ test.describe('captions (manual-only dropdown)', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await expect(page.locator('[aria-labelledby="md-captions"]')).toContainText('None');
     await openCaptions(page);
+    await expect(page.locator('[aria-labelledby="md-captions"]')).toContainText('None');
     await expect(page.getByRole('option', { name: /en - English/ })).toBeVisible();
     await expect(page.getByRole('option', { name: /es - Spanish/ })).toBeVisible();
     await expect(page.getByText('Manual-only').first()).toBeVisible();
@@ -50,6 +51,7 @@ test.describe('captions (manual-only dropdown)', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
+    await app.advanced();
     await app.pickCaptions('en - English', 'es - Spanish');
     await app.download();
     expect(posted).toMatchObject({ embedCaptions: expect.arrayContaining(['en', 'es']) });
@@ -103,6 +105,7 @@ test.describe('captions-only mode', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.pickFormat('captions');
+    await app.advanced();
     await app.pickCaptions('en - English');
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
@@ -121,6 +124,7 @@ test.describe('captions-only mode', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.pickFormat('captions');
+    await app.advanced();
     await app.pickCaptions('en - English', 'es - Spanish');
     await app.download();
     await expect(page.getByText('saved ✓').first()).toBeVisible({ timeout: 15_000 });
@@ -138,6 +142,7 @@ test.describe('captions-only mode', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.pickFormat('captions');
+    await app.advanced();
     await app.pickCaptions('en - English');
     await page.getByLabel('Captions file format').selectOption('vtt');
     await app.download();
