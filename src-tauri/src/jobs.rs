@@ -64,6 +64,33 @@ fn codec_label(codec: &Option<String>) -> Option<&'static str> {
 
 const AUDIO_ONLY: [&str; 5] = ["mp3", "m4a", "opus", "wav", "flac"];
 
+/// Output template: audio jobs pinned to a language bake a `[lang]` tag into
+/// the name, so concurrent per-track jobs never share intermediate filenames
+/// (same `-o` template + pool = clobbered files and wrong `[lang]` tags).
+fn media_outtmpl(out_dir: &str, container: &str, lang: Option<&str>) -> String {
+    let base = format!("{out_dir}/%(title)s [%(id)s]");
+    let tag = if AUDIO_ONLY.contains(&container) {
+        lang.map(|l| {
+            l.chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+    } else {
+        None
+    };
+    match tag {
+        Some(t) => format!("{base} [{t}].%(ext)s"),
+        None => format!("{base}.%(ext)s"),
+    }
+}
+
 /// Post-download: rename to quality/codec (video) or language (audio) tags
 /// and move sidecar subs into Captions/ when splitting. Returns final path.
 async fn finalize_file(spec: &DownloadSpec, path: Option<String>) -> Option<String> {
@@ -98,7 +125,14 @@ async fn finalize_file(spec: &DownloadSpec, path: Option<String>) -> Option<Stri
             None => q,
         }
     };
-    let final_name = sanitize_name(&format!("{stem} [{tag}].{ext}"));
+    let final_name = if stem.ends_with(&format!("[{tag}]")) {
+        // Template already carried the tag (per-track audio jobs): keep it.
+        src.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("{stem} [{tag}].{ext}"))
+    } else {
+        sanitize_name(&format!("{stem} [{tag}].{ext}"))
+    };
     let final_path = parent.join(&final_name);
     let final_str = match std::fs::rename(&src, &final_path) {
         Ok(()) => final_path.to_string_lossy().to_string(),
@@ -676,7 +710,11 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         "-f".to_string(),
         format,
         "-o".to_string(),
-        format!("{}/%(title)s [%(id)s].%(ext)s", spec.out_dir),
+        media_outtmpl(
+            &spec.out_dir,
+            &spec.container,
+            spec.audio_tracks.first().map(|s| s.as_str()),
+        ),
         "--print".to_string(),
         "after_move:filepath".to_string(),
     ];
@@ -1281,6 +1319,54 @@ mod tests {
         assert!(!multi);
         let (fmt, _) = build_format(&serde_json::json!("best"), "mp3", &None, &[]);
         assert_eq!(fmt, "bestaudio/best");
+    }
+
+    #[test]
+    fn outtmpl_tags_pinned_audio_only() {
+        assert_eq!(
+            media_outtmpl("/tmp/o", "mp3", Some("es")),
+            "/tmp/o/%(title)s [%(id)s] [es].%(ext)s"
+        );
+        // Untagged originals and video jobs keep the plain template.
+        assert_eq!(
+            media_outtmpl("/tmp/o", "mp3", None),
+            "/tmp/o/%(title)s [%(id)s].%(ext)s"
+        );
+        assert_eq!(
+            media_outtmpl("/tmp/o", "mp4", Some("es")),
+            "/tmp/o/%(title)s [%(id)s].%(ext)s"
+        );
+        // Hostile lang codes can't escape the filename.
+        assert_eq!(
+            media_outtmpl("/tmp/o", "mp3", Some("a/b")),
+            "/tmp/o/%(title)s [%(id)s] [a_b].%(ext)s"
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_keeps_template_tagged_name() {
+        let dir = std::env::temp_dir().join(format!("koutube-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let src = dir.join("Title [abc] [es].mp3");
+        std::fs::write(&src, "data").unwrap();
+        let spec = DownloadSpec {
+            url: "https://www.youtube.com/watch?v=abc".to_string(),
+            video_id: Some("abc".to_string()),
+            container: "mp3".to_string(),
+            quality: serde_json::json!("best"),
+            codec: None,
+            audio_tracks: vec!["es".to_string()],
+            captions: vec![],
+            captions_only: false,
+            out_dir: dir.to_string_lossy().to_string(),
+            title: None,
+            overwrite: false,
+            split_kinds: false,
+        };
+        let out = finalize_file(&spec, Some(src.to_string_lossy().to_string())).await;
+        assert_eq!(out, Some(src.to_string_lossy().to_string()));
+        assert!(src.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
