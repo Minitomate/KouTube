@@ -2,7 +2,9 @@
   <img src="src-tauri/icons/icon.svg" width="120" alt="KouTube logo">
 </p>
 
-A local-only YouTube downloader for desktop. Paste a link, pick what you want, save it straight to your disk — no accounts, no servers, no uploads.
+<h1 align="center">KouTube</h1>
+
+<p align="center">A local-only YouTube downloader for desktop. Paste a link, pick what you want, save it straight to your disk — no accounts, no servers, no uploads.</p>
 
 ## Download
 
