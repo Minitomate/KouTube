@@ -36,6 +36,8 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
     try {
       await playFile(item.filepath);
     } catch (e) {
+      // Full error to the console for copy-paste; short text on the card.
+      console.error('[KouTube] play failed', item.filepath, e);
       setActionError(e instanceof Error ? `Could not open the file: ${e.message}` : 'Could not open the file.');
     }
   }
@@ -44,6 +46,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
     try {
       await revealFile(item.filepath);
     } catch (e) {
+      console.error('[KouTube] reveal failed', item.filepath, e);
       setActionError(e instanceof Error ? `Could not open the folder: ${e.message}` : 'Could not open the folder.');
     }
   }

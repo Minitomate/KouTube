@@ -161,7 +161,10 @@ export default function Settings() {
           YouTube or Google.
         </p>
         <div className="row" style={{ marginTop: 8 }}>
-          <button className="pill-btn outlined" onClick={() => void openTerms().catch((e) => setNote(e instanceof Error ? `Could not open the link: ${e.message}` : 'Could not open the link.'))}>
+          <button className="pill-btn outlined" onClick={() => void openTerms().catch((e) => {
+            console.error('[KouTube] open terms failed', e);
+            setNote(e instanceof Error ? `Could not open the link: ${e.message}` : 'Could not open the link.');
+          })}>
             YouTube Terms
           </button>
         </div>
