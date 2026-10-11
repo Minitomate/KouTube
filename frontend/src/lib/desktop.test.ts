@@ -5,6 +5,7 @@ const listenMock = vi.fn();
 const openMock = vi.fn();
 const openPathMock = vi.fn();
 const revealMock = vi.fn();
+const openUrlMock = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -18,6 +19,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 vi.mock('@tauri-apps/plugin-opener', () => ({
   openPath: (...args: unknown[]) => openPathMock(...args),
   revealItemInDir: (...args: unknown[]) => revealMock(...args),
+  openUrl: (...args: unknown[]) => openUrlMock(...args),
 }));
 
 import {
@@ -32,6 +34,7 @@ beforeEach(() => {
   openMock.mockReset();
   openPathMock.mockReset();
   revealMock.mockReset();
+  openUrlMock.mockReset();
 });
 
 describe('desktop adapter', () => {
@@ -161,6 +164,19 @@ describe('desktop adapter', () => {
     expect(revealMock).toHaveBeenCalledWith('/tmp/v.mp4');
     await trashDownload('/tmp/v.mp4');
     expect(invokeMock).toHaveBeenCalledWith('trash_file', { path: '/tmp/v.mp4' });
+  });
+
+  it('opens the YouTube Terms URL', async () => {
+    const { openTerms, YOUTUBE_TERMS_URL } = await import('./desktop');
+    const w = window as unknown as Record<string, unknown>;
+    w.__TAURI_INTERNALS__ = {};
+    try {
+      openUrlMock.mockResolvedValue(undefined);
+      await openTerms();
+      expect(openUrlMock).toHaveBeenCalledWith(YOUTUBE_TERMS_URL);
+    } finally {
+      delete w.__TAURI_INTERNALS__;
+    }
   });
 
   it('maps sidecar events to card states', async () => {

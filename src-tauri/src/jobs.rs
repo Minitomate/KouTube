@@ -376,6 +376,24 @@ async fn finish(app: &AppHandle, job_id: &str, view: JobView) {
 // resolve
 // ---------------------------------------------------------------------------
 
+/// Sidecar spawn: on Windows, console-subsystem children (yt-dlp, and the
+/// ffmpeg it forks) must not pop a console window. Built on std first so the
+/// flag API is guaranteed, then converted for tokio.
+fn sidecar_command(program: &std::path::Path) -> tokio::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut std_cmd = std::process::Command::new(program);
+        std_cmd.creation_flags(CREATE_NO_WINDOW);
+        tokio::process::Command::from_std(std_cmd)
+    }
+    #[cfg(not(windows))]
+    {
+        tokio::process::Command::new(program)
+    }
+}
+
 fn is_playlist_url(url: &str) -> bool {
     url.contains("list=")
 }
@@ -386,7 +404,7 @@ pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
         .ok_or_else(|| anyhow!("yt-dlp missing: run setup first"))?;
     validate_url(url)?;
     let flat = is_playlist_url(url);
-    let mut cmd = tokio::process::Command::new(&ytdlp);
+    let mut cmd = sidecar_command(&ytdlp);
     cmd.args(["--dump-json", "--no-warnings", "--socket-timeout", "15"]);
     if flat {
         cmd.args(["--flat-playlist", "--playlist-end", "50"]);
@@ -440,7 +458,7 @@ async fn fetch_avatar(ytdlp: &std::path::Path, channel_url: Option<&str>) -> Opt
 }
 
 async fn fetch_avatar_inner(ytdlp: &std::path::Path, channel_url: &str) -> Option<String> {
-    let mut cmd = tokio::process::Command::new(ytdlp);
+    let mut cmd = sidecar_command(ytdlp);
     cmd.args([
         "--dump-json",
         "--skip-download",
@@ -1059,7 +1077,7 @@ async fn run_once(
     )
     .await;
 
-    let mut cmd = tokio::process::Command::new(&ytdlp);
+    let mut cmd = sidecar_command(&ytdlp);
     cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

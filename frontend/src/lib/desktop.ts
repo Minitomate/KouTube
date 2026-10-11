@@ -215,6 +215,18 @@ export async function playFile(path: string): Promise<void> {
   await opener.openPath(path);
 }
 
+export const YOUTUBE_TERMS_URL = 'https://www.youtube.com/t/terms';
+
+/** Open the YouTube Terms in a browser (desktop opener, plain tab on web). */
+export async function openTerms(): Promise<void> {
+  if (isTauri()) {
+    const opener = await import('@tauri-apps/plugin-opener');
+    await opener.openUrl(YOUTUBE_TERMS_URL);
+  } else {
+    window.open(YOUTUBE_TERMS_URL, '_blank', 'noopener');
+  }
+}
+
 export async function revealFile(path: string): Promise<void> {
   const opener = await import('@tauri-apps/plugin-opener');
   await opener.revealItemInDir(path);

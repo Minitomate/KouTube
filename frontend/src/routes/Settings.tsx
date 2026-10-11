@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
 import { loadSettings, saveSettings, SEEDS, VARIANTS, type Settings } from '../lib/settings';
 import { QUALITIES } from '../lib/store';
-import { isTauri, pickFolder, getRecentLogs } from '../lib/desktop';
+import { isTauri, pickFolder, getRecentLogs, openTerms } from '../lib/desktop';
 import PreferenceFields from '../components/PreferenceFields';
 
 export default function Settings() {
@@ -151,6 +151,20 @@ export default function Settings() {
           <button className="pill-btn outlined" onClick={showLog}>View backend log</button>
         </div>
         {log && <pre className="log-view">{log.slice(-60).join('\n') || '(empty)'}</pre>}
+      </div>
+      <div className="card">
+        <h2>Legal</h2>
+        <p className="meta">
+          KouTube is for personal, lawful use. Download only videos you own or
+          that permit offline use, respect creators' rights, and comply with
+          YouTube's Terms of Service. Not affiliated with or endorsed by
+          YouTube or Google.
+        </p>
+        <div className="row" style={{ marginTop: 8 }}>
+          <button className="pill-btn outlined" onClick={() => void openTerms().catch(() => setNote('Could not open the link.'))}>
+            YouTube Terms
+          </button>
+        </div>
       </div>
       {note && <div className="meta" role="note">{note}</div>}
     </>
