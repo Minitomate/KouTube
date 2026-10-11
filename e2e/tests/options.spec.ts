@@ -152,6 +152,35 @@ test.describe('container and codec options', () => {
     await expect(page.getByText(/Audio only — no captions/)).toBeVisible();
   });
 
+  test('web audio hides encode selects and stays MP3', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    let posted: Record<string, unknown> | undefined;
+    await page.route('**/api/prepare', (r) => {
+      posted = r.request().postDataJSON() as Record<string, unknown>;
+      return r.fulfill({
+        json: {
+          filename: 'a.mp3', container: 'mp3', mergeRequired: false,
+          sizeEstimate: 4, streamToken: 's', muxToken: null, captions: [],
+        },
+      });
+    });
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: 'data', contentType: 'audio/mpeg' }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('audio');
+    // Encode selects are desktop-only; web relays MP3.
+    await expect(page.getByLabel('Audio container')).toHaveCount(0);
+    await expect(page.getByLabel('Audio codec')).toHaveCount(0);
+    await expect(page.getByLabel('Audio quality')).toHaveCount(0);
+    await expect(page.getByText(/Audio downloads as MP3 on web/)).toBeVisible();
+    await app.download();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    expect(posted).toMatchObject({ container: 'mp3' });
+  });
+
   test('missing dub fails loudly with the language named', async ({ page }) => {
     await page.route('**/api/resolve', (r) =>
       r.fulfill({

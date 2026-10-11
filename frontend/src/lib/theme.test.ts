@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTheme } from './store';
+import { resolveTheme, resolveAudio } from './store';
 import { avatarThumb, fmtRelative } from '../components/VideoInfoCard';
 
 describe('resolveTheme', () => {
@@ -71,5 +71,18 @@ describe('avatarThumb', () => {
     expect(avatarThumb('https://yt3.googleusercontent.com/abc123')).toBe(
       'https://yt3.googleusercontent.com/abc123=s88',
     );
+  });
+});
+
+describe('resolveAudio', () => {
+  it('keeps lossy quality, nulls it for lossless', () => {
+    expect(resolveAudio('mp3', 'mp3', '192K')).toEqual({ codec: 'mp3', quality: '192K' });
+    expect(resolveAudio('m4a', 'alac', '320K')).toEqual({ codec: 'alac', quality: null });
+    expect(resolveAudio('flac', 'flac', 'best')).toEqual({ codec: 'flac', quality: null });
+  });
+
+  it('coerces unknown codecs to the container default', () => {
+    expect(resolveAudio('mp3', 'alac', 'best')).toEqual({ codec: 'mp3', quality: 'best' });
+    expect(resolveAudio('opus', 'nope', '128K')).toEqual({ codec: 'opus', quality: '128K' });
   });
 });

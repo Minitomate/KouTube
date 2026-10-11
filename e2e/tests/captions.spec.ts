@@ -126,4 +126,24 @@ test.describe('captions-only mode', () => {
     await expect(page.getByText('saved ✓').first()).toBeVisible({ timeout: 15_000 });
     expect(langs.sort()).toEqual(['en', 'es']);
   });
+
+  test('captions format VTT requests vtt subs', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const urls: string[] = [];
+    await page.route('**/api/subs*', (r) => {
+      urls.push(r.request().url());
+      return r.fulfill({ status: 200, body: 'WEBVTT\n\n00:00.000 --> 00:01.000\nhi', contentType: 'text/vtt' });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('captions');
+    await app.pickCaptions('en - English');
+    await page.getByLabel('Captions file format').selectOption('vtt');
+    await app.download();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain('fmt=vtt');
+    await expect(page.getByText(/\[en\]\.vtt/)).toBeVisible();
+  });
 });

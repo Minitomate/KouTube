@@ -1,14 +1,18 @@
-import { useStore, CODEC_LABELS, type Codec, type Container } from '../lib/store';
+import { useStore, CODEC_LABELS, AUDIO_CONTAINERS, AUDIO_CODECS, AUDIO_QUALITIES, type Codec, type Container, type AudioContainer, type AudioQuality } from '../lib/store';
+import { isTauri } from '../lib/desktop';
 import MultiDropdown from './MultiDropdown';
 
 /** Right column: condensed native dropdowns, YouTube-dialog style. */
 export default function DownloadOptionsCard() {
-  const { format, quality, container, codec, audioTracks, media, set, toggleAudioTrack, toggleCaption, captions } = useStore();
+  const { format, quality, container, codec, audioContainer, audioCodec, audioQuality, captionsFormat, audioTracks, media, set, toggleAudioTrack, toggleCaption, captions } = useStore();
   const qualities = media?.qualities?.length ? media.qualities : ['best'];
   const heights = qualities.filter((q) => q !== 'best');
   const max = heights.length ? heights[heights.length - 1] : null;
   const tracks = media?.audioTracks ?? [];
   const caps = media?.captions ?? [];
+  const desktop = isTauri();
+  const codecs = AUDIO_CODECS[audioContainer];
+  const showQuality = audioContainer !== 'wav' && audioContainer !== 'flac' && audioCodec !== 'alac';
   return (
     <div className="card">
       <h2>Download options</h2>
@@ -72,7 +76,7 @@ export default function DownloadOptionsCard() {
       )}
       {format === 'captions' && (
         <p className="meta" style={{ marginTop: 12 }}>
-          Subtitle files only (.srt) — no video or audio is downloaded.
+          Subtitle files only (.{captionsFormat}) — no video or audio is downloaded.
         </p>
       )}
       {format !== 'captions' && (
@@ -86,19 +90,85 @@ export default function DownloadOptionsCard() {
         />
       )}
       {format !== 'audio' && (
-        <MultiDropdown
-          label="Captions"
-          options={caps.map((c) => ({ id: c.id, label: c.label, badge: c.manual ? 'Manual-only' : undefined }))}
-          selected={captions}
-          onToggle={toggleCaption}
-          emptyText="No manual captions for this video."
-          summaryNone="None"
-        />
+        <>
+          <MultiDropdown
+            label="Captions"
+            options={caps.map((c) => ({ id: c.id, label: c.label, badge: c.manual ? 'Manual-only' : undefined }))}
+            selected={captions}
+            onToggle={toggleCaption}
+            emptyText="No manual captions for this video."
+            summaryNone="None"
+          />
+          <label className="field">
+            <span>Captions format</span>
+            <select
+              aria-label="Captions file format"
+              className="select-pill"
+              value={captionsFormat}
+              onChange={(e) => set({ captionsFormat: e.target.value as 'srt' | 'vtt' })}
+            >
+              <option value="srt">SRT</option>
+              <option value="vtt">VTT</option>
+            </select>
+          </label>
+        </>
       )}
       {format === 'audio' && (
-        <p className="meta" style={{ marginTop: 12 }}>
-          Audio only — no captions are downloaded.
-        </p>
+        <>
+          {desktop ? (
+            <div className="field-row">
+              <label className="field">
+                <span>Container</span>
+                <select
+                  aria-label="Audio container"
+                  className="select-pill"
+                  value={audioContainer}
+                  onChange={(e) => {
+                    const next = e.target.value as AudioContainer;
+                    set({ audioContainer: next, audioCodec: AUDIO_CODECS[next][0].id });
+                  }}
+                >
+                  {AUDIO_CONTAINERS.map((c) => (
+                    <option key={c} value={c}>{c.toUpperCase()}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Codec</span>
+                <select
+                  aria-label="Audio codec"
+                  className="select-pill"
+                  value={audioCodec}
+                  onChange={(e) => set({ audioCodec: e.target.value })}
+                >
+                  {codecs.map((c) => (
+                    <option key={c.id} value={c.id}>{c.label}</option>
+                  ))}
+                </select>
+              </label>
+              {showQuality && (
+                <label className="field">
+                  <span>Quality</span>
+                  <select
+                    aria-label="Audio quality"
+                    className="select-pill"
+                    value={audioQuality}
+                    onChange={(e) => set({ audioQuality: e.target.value as AudioQuality })}
+                  >
+                    {AUDIO_QUALITIES.map((q) => (
+                      <option key={q.id} value={q.id}>{q.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          ) : (
+            <p className="meta" style={{ marginTop: 12 }}>Audio downloads as MP3 on web.</p>
+          )}
+          <p className="meta" style={{ marginTop: 12 }}>
+            Audio only — no captions are downloaded.
+          </p>
+        </>
       )}
     </div>
   );

@@ -53,6 +53,7 @@ export interface Choice {
   codec?: string;
   audioTrack: string;
   captions: string[];
+  subFormat: string;
 }
 
 export async function prepare(c: Choice): Promise<Prepare> {
@@ -66,7 +67,7 @@ export async function prepare(c: Choice): Promise<Prepare> {
       codec: c.codec && c.codec !== 'auto' ? c.codec : null,
       audioTrackLang: c.audioTrack === 'original' ? null : c.audioTrack,
       embedCaptions: c.captions,
-      subFormat: 'srt',
+      subFormat: c.subFormat,
     }),
   });
   if (!res.ok) {
@@ -94,12 +95,12 @@ export function safeName(s: string): string {
   return s.replace(/[<>:\"/\\|?*\x00-\x1f]/g, '_').trim().substring(0, 120) || 'video';
 }
 
-export function srtFilename(title: string, videoId: string | undefined, lang: string): string {
-  return `${safeName(title)} [${videoId ?? 'video'}] [${lang}].srt`;
+export function srtFilename(title: string, videoId: string | undefined, lang: string, fmt = 'srt'): string {
+  return `${safeName(title)} [${videoId ?? 'video'}] [${lang}].${fmt}`;
 }
 
-export function subsUrl(pageUrl: string, lang: string): string {
-  return `/api/subs?url=${encodeURIComponent(pageUrl)}&lang=${encodeURIComponent(lang)}`;
+export function subsUrl(pageUrl: string, lang: string, fmt = 'srt'): string {
+  return `/api/subs?url=${encodeURIComponent(pageUrl)}&lang=${encodeURIComponent(lang)}&fmt=${encodeURIComponent(fmt)}`;
 }
 
 /** Anchor download of an in-memory blob. */

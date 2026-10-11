@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import pLimit from 'p-limit';
-import { useStore, blankTransfer, tlog, effectiveQuality, type Transfer } from '../lib/store';
+import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, type Transfer, type AudioQuality } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
 import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, pctRate, existingOutputs } from '../lib/desktop';
@@ -17,7 +17,7 @@ import ThemeToggle from '../components/ThemeToggle';
 const ZIP_CAP = 10;
 
 export default function Home() {
-  const { url, media, inspecting, format, quality, container, codec, audioTracks, captions, set, upsertTransfer, queue, online } = useStore();
+  const { url, media, inspecting, format, quality, container, codec, audioContainer, audioCodec, audioQuality, captionsFormat, audioTracks, captions, set, upsertTransfer, queue, online } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
@@ -105,18 +105,24 @@ export default function Home() {
   }
 
   /** Effective container/quality/notes from codec availability + rules. */
-  function planDownload(): { quality: string; container: string; notes: string[]; blocked?: string } {
+  function planDownload(): {
+    quality: string; container: string; notes: string[]; blocked?: string;
+    audioCodec: string; audioQuality: AudioQuality | null;
+  } {
     const notes: string[] = [];
-    let cont: string = format === 'audio' ? 'mp3' : container;
+    // Web relay can't transcode: new audio selects are desktop-only there.
+    const desktop = isTauri();
+    let cont: string = format === 'audio' ? (desktop ? audioContainer : 'mp3') : container;
     let q = quality;
+    const au = resolveAudio(audioContainer, audioCodec, audioQuality);
     if (format === 'captions') {
       if (captions.length === 0) {
-        return { quality: q, container: 'srt', notes, blocked: 'Select at least one caption language for captions mode.' };
+        return { quality: q, container: 'srt', notes, blocked: 'Select at least one caption language for captions mode.', audioCodec: au.codec, audioQuality: null };
       }
-      return { quality: q, container: 'srt', notes };
+      return { quality: q, container: 'srt', notes, audioCodec: au.codec, audioQuality: null };
     }
     if (format === 'audio' && audioTracks.length === 0) {
-      return { quality: q, container: cont, notes, blocked: 'Select at least one audio track for audio mode.' };
+      return { quality: q, container: cont, notes, blocked: 'Select at least one audio track for audio mode.', audioCodec: au.codec, audioQuality: null };
     }
     if (format === 'audio' && captions.length > 0) {
       notes.push('Captions are skipped for audio-only.');
@@ -132,7 +138,7 @@ export default function Home() {
         notes.push('Merging to MKV: multiple audio tracks cannot go in MP4.');
       }
     }
-    return { quality: q, container: cont, notes };
+    return { quality: q, container: cont, notes, audioCodec: au.codec, audioQuality: desktop ? au.quality : null };
   }
 
   async function downloadSingle(pageUrl: string, title: string, audioLang?: string, transferId?: string) {
@@ -150,7 +156,7 @@ export default function Home() {
       upsertTransfer({ id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', rid });
       const plan = planDownload();
       if (plan.notes.length) setWarn(plan.notes.join(' '));
-      const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions: format === 'audio' ? [] : captions });
+      const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions: format === 'audio' ? [] : captions, subFormat: captionsFormat });
       // Multi-track audio: one file per language, tagged so names never collide.
       const filename = format === 'audio' && audioTracks.length > 1 ? tagFilename(p.filename, lang) : p.filename;
       setCanCancel(true);
@@ -233,7 +239,7 @@ export default function Home() {
           try {
             const plan = planDownload();
             if (plan.notes.length) setWarn(plan.notes.join(' '));
-            const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: c.lang, captions: noCaps });
+            const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: c.lang, captions: noCaps, subFormat: captionsFormat });
             const filename = langs.length > 1 ? tagFilename(p.filename, c.lang) : p.filename;
             upsertTransfer({ id, title: filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching' });
             zipItems.push({ id, filename, url: transferUrl(p), sizeEstimate: p.sizeEstimate });
@@ -304,8 +310,8 @@ export default function Home() {
     }
     const zipItems = videos.flatMap((v, i) => captions.map((lang, j) => ({
       id: `zip-${i}-${j}`,
-      filename: srtFilename(v.title, v.videoId, lang),
-      url: subsUrl(v.pageUrl, lang),
+      filename: srtFilename(v.title, v.videoId, lang, captionsFormat),
+      url: subsUrl(v.pageUrl, lang, captionsFormat),
       sizeEstimate: null as number | null,
     })));
     if (zipItems.length === 1) {
@@ -396,6 +402,8 @@ export default function Home() {
         kind: extra?.captionsOnly ? 'captions' : format,
         outputContainer: plan.container,
         quality: plan.quality, codec,
+        audioCodec: plan.audioCodec, audioQuality: plan.audioQuality,
+        captionsFormat,
         audioTracks: extra?.audioTracks ?? audioTracks,
         // Audio-only never carries captions (they'd embed into every track).
         captions: format === 'audio' && !extra?.captionsOnly ? [] : captions,

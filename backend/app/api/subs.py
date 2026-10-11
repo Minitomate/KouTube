@@ -17,7 +17,10 @@ router = APIRouter()
 
 @router.get("/subs")
 @L.limiter.limit("30/minute")
-async def subs(url: str, lang: str, request: Request):
+async def subs(url: str, lang: str, request: Request, fmt: str = "srt"):
+    if fmt not in ("srt", "vtt"):
+        raise HTTPException(status_code=400, detail={
+            "code": "bad-format", "message": "Subtitles format must be srt or vtt."})
     try:
         page = normalize_to_url(url)
     except ValueError as exc:
@@ -33,7 +36,7 @@ async def subs(url: str, lang: str, request: Request):
         raise HTTPException(status_code=400, detail={
             "code": "no-captions", "message": "No manual captions for this language."})
     try:
-        texts = await run_in_threadpool(Y.fetch_sub_texts, page, [lang], "srt")
+        texts = await run_in_threadpool(Y.fetch_sub_texts, page, [lang], fmt)
     except Exception as exc:  # noqa: BLE001
         code, msg = Y.classify_error(exc)
         raise HTTPException(status_code=400, detail={"code": code, "message": msg})
@@ -43,6 +46,6 @@ async def subs(url: str, lang: str, request: Request):
             "code": "no-captions", "message": "Subtitles came back empty."})
     vid = (info or {}).get("id", "")
     title = (info or {}).get("title", "video")
-    filename = f"{sanitize_filename(title)} [{vid}] [{lang}].srt"
+    filename = f"{sanitize_filename(title)} [{vid}] [{lang}].{fmt}"
     return PlainTextResponse(text, headers={
         "Content-Disposition": f'attachment; filename="{filename}"'})

@@ -39,17 +39,20 @@ describe('desktop adapter', () => {
     invokeMock.mockResolvedValue('job-1');
     listenMock.mockResolvedValue(() => {});
     await startDesktopDownload(
-      { url: 'https://www.youtube.com/watch?v=x', videoId: 'x', kind: 'audio', outputContainer: 'mp3', quality: 'best', codec: 'auto', audioTracks: ['original'], captions: ['en'], overwrite: false, splitKinds: false },
+      { url: 'https://www.youtube.com/watch?v=x', videoId: 'x', kind: 'audio', outputContainer: 'm4a', quality: 'best', codec: 'auto', audioCodec: 'alac', audioQuality: null, captionsFormat: 'srt', audioTracks: ['original'], captions: ['en'], overwrite: false, splitKinds: false },
       '/tmp/out',
       () => {},
     );
     expect(invokeMock).toHaveBeenCalledWith('start_download', {
       url: 'https://www.youtube.com/watch?v=x',
       videoId: 'x',
-      container: 'mp3',
+      container: 'm4a',
       quality: 'best',
       // Tauri exposes snake_case Rust params as camelCase: assert exact keys.
       codec: null,
+      audioCodec: 'alac',
+      audioQuality: null,
+      captionsFormat: 'srt',
       audioTracks: [],
       captions: ['en'],
       captionsOnly: false,
@@ -63,7 +66,7 @@ describe('desktop adapter', () => {
     invokeMock.mockResolvedValue('job-2');
     listenMock.mockResolvedValue(() => {});
     await startDesktopDownload(
-      { url: 'u', videoId: 'v', kind: 'captions', outputContainer: 'srt', quality: 'best', codec: 'auto', audioTracks: [], captions: ['en', 'de'], overwrite: false, splitKinds: true },
+      { url: 'u', videoId: 'v', kind: 'captions', outputContainer: 'srt', quality: 'best', codec: 'auto', audioCodec: 'mp3', audioQuality: null, captionsFormat: 'vtt', audioTracks: [], captions: ['en', 'de'], overwrite: false, splitKinds: true },
       '/tmp',
       () => {},
     );
@@ -73,6 +76,9 @@ describe('desktop adapter', () => {
       container: 'srt',
       quality: 'best',
       codec: null,
+      audioCodec: null,
+      audioQuality: null,
+      captionsFormat: 'vtt',
       audioTracks: [],
       captions: ['en', 'de'],
       captionsOnly: true,
@@ -91,7 +97,7 @@ describe('desktop adapter', () => {
     });
     const seen: string[] = [];
     await startDesktopDownload(
-      { url: 'u', videoId: 'u', kind: 'video', outputContainer: 'mkv', quality: '720', codec: 'avc', audioTracks: ['en', 'de'], captions: [], overwrite: false, splitKinds: false },
+      { url: 'u', videoId: 'u', kind: 'video', outputContainer: 'mkv', quality: '720', codec: 'avc', audioCodec: 'mp3', audioQuality: null, captionsFormat: 'srt', audioTracks: ['en', 'de'], captions: [], overwrite: false, splitKinds: false },
       '/tmp',
       (e) => seen.push(e.status),
     );

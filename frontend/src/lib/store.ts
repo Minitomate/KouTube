@@ -26,6 +26,9 @@ export function tlog(t: Transfer, line: string): Transfer {
 
 export type Container = 'mp4' | 'webm' | 'mkv';
 export type Codec = 'auto' | 'avc' | 'hevc' | 'vp9' | 'av1';
+export type AudioContainer = 'mp3' | 'm4a' | 'opus' | 'wav' | 'flac';
+export type AudioQuality = 'best' | '320K' | '256K' | '192K' | '128K';
+export type CaptionsFormat = 'srt' | 'vtt';
 
 export const CODEC_LABELS: Record<Exclude<Codec, 'auto'>, string> = {
   avc: 'AVC (H.264)',
@@ -33,6 +36,37 @@ export const CODEC_LABELS: Record<Exclude<Codec, 'auto'>, string> = {
   vp9: 'VP9',
   av1: 'AV1',
 };
+
+export const AUDIO_CONTAINERS: AudioContainer[] = ['mp3', 'm4a', 'opus', 'wav', 'flac'];
+
+/** Encoder choices per audio container (m4a alone offers two). */
+export const AUDIO_CODECS: Record<AudioContainer, Array<{ id: string; label: string }>> = {
+  mp3: [{ id: 'mp3', label: 'MP3' }],
+  m4a: [{ id: 'aac', label: 'AAC' }, { id: 'alac', label: 'ALAC (lossless)' }],
+  opus: [{ id: 'opus', label: 'Opus' }],
+  wav: [{ id: 'wav', label: 'WAV (PCM)' }],
+  flac: [{ id: 'flac', label: 'FLAC' }],
+};
+
+export const AUDIO_QUALITIES: Array<{ id: AudioQuality; label: string }> = [
+  { id: 'best', label: 'Best' },
+  { id: '320K', label: '320 kbps' },
+  { id: '256K', label: '256 kbps' },
+  { id: '192K', label: '192 kbps' },
+  { id: '128K', label: '128 kbps' },
+];
+
+/** Resolved audio encode settings; quality is null for lossless or web relay. */
+export function resolveAudio(
+  container: AudioContainer,
+  codec: string,
+  quality: AudioQuality,
+): { codec: string; quality: AudioQuality | null } {
+  const ok = AUDIO_CODECS[container].some((c) => c.id === codec);
+  const resolved = ok ? codec : AUDIO_CODECS[container][0].id;
+  const lossless = container === 'wav' || container === 'flac' || resolved === 'alac';
+  return { codec: resolved, quality: lossless ? null : quality };
+}
 
 /** vcodec prefixes as they appear in format strings. */
 const CODEC_PREFIXES: Record<Exclude<Codec, 'auto'>, string[]> = {
@@ -80,6 +114,10 @@ interface State {
   quality: string;
   container: Container;
   codec: Codec;
+  audioContainer: AudioContainer;
+  audioCodec: string;
+  audioQuality: AudioQuality;
+  captionsFormat: CaptionsFormat;
   audioTracks: string[];
   captions: string[];
   queue: Transfer[];
@@ -115,6 +153,10 @@ export const useStore = create<State>((set) => ({
   quality: 'best',
   container: 'mp4',
   codec: 'auto',
+  audioContainer: 'mp3',
+  audioCodec: 'mp3',
+  audioQuality: 'best',
+  captionsFormat: 'srt',
   audioTracks: [],
   captions: [],
   queue: [],

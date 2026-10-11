@@ -43,6 +43,9 @@ pub struct DownloadSpec {
     pub codec: Option<String>,
     pub audio_tracks: Vec<String>,
     pub captions: Vec<String>,
+    pub audio_codec: Option<String>,
+    pub audio_quality: Option<String>,
+    pub captions_format: String,
     /// Captions-only: no media, just sidecar subtitle files.
     pub captions_only: bool,
     pub out_dir: String,
@@ -693,18 +696,45 @@ fn build_format(
 }
 
 /// Subtitle args shared by the embed path and the captions-only path.
-fn sub_args(langs: &[String], embed: bool) -> Vec<String> {
+fn sub_args(langs: &[String], embed: bool, fmt: &str) -> Vec<String> {
     let mut args = vec![
         "--write-subs".to_string(),
         "--sub-langs".to_string(),
         langs.join(","),
         "--sub-format".to_string(),
-        "srt/best".to_string(),
+        format!("{fmt}/best"),
     ];
     if embed {
         args.push("--embed-subs".to_string());
     }
     args
+}
+
+/// Map the UI audio codec to yt-dlp `--audio-format`. AAC stays in m4a
+/// without a forced re-encode; everything else names its encoder.
+fn audio_extract_format(codec: &Option<String>) -> &'static str {
+    match codec.as_deref() {
+        Some("aac") => "m4a",
+        Some("alac") => "alac",
+        Some("opus") => "opus",
+        Some("wav") => "wav",
+        Some("flac") => "flac",
+        _ => "mp3",
+    }
+}
+
+/// Bitrate flag, lossy encodes only (frontend nulls the rest; belt-and-braces).
+fn audio_quality_flag(
+    container: &str,
+    codec: &Option<String>,
+    quality: &Option<String>,
+) -> Option<String> {
+    let lossy = matches!(container, "mp3" | "m4a" | "opus") && codec.as_deref() != Some("alac");
+    if lossy {
+        quality.clone()
+    } else {
+        None
+    }
 }
 
 fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
@@ -730,7 +760,7 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
             format!("{}/%(title)s [%(id)s].%(ext)s", spec.out_dir),
             "--skip-download".to_string(),
         ];
-        args.extend(sub_args(&spec.captions, false));
+        args.extend(sub_args(&spec.captions, false, &spec.captions_format));
         if spec.overwrite {
             args.push("--force-overwrites".to_string());
         }
@@ -771,15 +801,19 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         args.extend([
             "-x".to_string(),
             "--audio-format".to_string(),
-            spec.container.clone(),
+            audio_extract_format(&spec.audio_codec).to_string(),
             // Otherwise the source (usually webm) stays next to the extract.
             "--no-keep-video".to_string(),
         ]);
+        if let Some(q) = audio_quality_flag(&spec.container, &spec.audio_codec, &spec.audio_quality)
+        {
+            args.extend(["--audio-quality".to_string(), q]);
+        }
     } else {
         args.extend(["--merge-output-format".to_string(), spec.container.clone()]);
     }
     if !spec.captions.is_empty() {
-        args.extend(sub_args(&spec.captions, true));
+        args.extend(sub_args(&spec.captions, true, &spec.captions_format));
     }
     if spec.overwrite {
         args.push("--force-overwrites".to_string());
@@ -1442,6 +1476,9 @@ mod tests {
             codec: None,
             audio_tracks: vec!["es".to_string()],
             captions: vec![],
+            audio_codec: None,
+            audio_quality: None,
+            captions_format: "srt".to_string(),
             captions_only: false,
             out_dir: dir.to_string_lossy().to_string(),
             title: None,
@@ -1474,6 +1511,9 @@ mod tests {
             codec: None,
             audio_tracks: vec![],
             captions: vec![],
+            audio_codec: None,
+            audio_quality: None,
+            captions_format: "srt".to_string(),
             captions_only: false,
             out_dir: dir.to_string_lossy().to_string(),
             title: None,
@@ -1499,6 +1539,9 @@ mod tests {
             codec: None,
             audio_tracks: vec!["es".to_string()],
             captions: vec![],
+            audio_codec: None,
+            audio_quality: None,
+            captions_format: "srt".to_string(),
             captions_only: false,
             out_dir: dir.to_string_lossy().to_string(),
             title: None,
@@ -1524,6 +1567,9 @@ mod tests {
             codec: None,
             audio_tracks: vec![],
             captions: vec!["en".to_string(), "de".to_string()],
+            audio_codec: None,
+            audio_quality: None,
+            captions_format: "srt".to_string(),
             captions_only: true,
             out_dir: dir.to_string_lossy().to_string(),
             title: None,
@@ -1537,13 +1583,57 @@ mod tests {
     #[test]
     fn sub_args_embed_vs_sidecar() {
         let langs = vec!["en".to_string(), "de".to_string()];
-        let embed = sub_args(&langs, true);
+        let embed = sub_args(&langs, true, "srt");
         assert!(embed.contains(&"--embed-subs".to_string()));
         assert!(embed.contains(&"en,de".to_string()));
-        let sidecar = sub_args(&langs, false);
+        assert!(embed.contains(&"srt/best".to_string()));
+        let sidecar = sub_args(&langs, false, "vtt");
         assert!(!sidecar.contains(&"--embed-subs".to_string()));
         assert!(sidecar.contains(&"--write-subs".to_string()));
+        assert!(sidecar.contains(&"vtt/best".to_string()));
         assert!(!sidecar.contains(&"--skip-download".to_string()));
+    }
+
+    #[test]
+    fn audio_extract_format_maps_codecs() {
+        assert_eq!(audio_extract_format(&Some("mp3".to_string())), "mp3");
+        assert_eq!(audio_extract_format(&Some("aac".to_string())), "m4a");
+        assert_eq!(audio_extract_format(&Some("alac".to_string())), "alac");
+        assert_eq!(audio_extract_format(&Some("opus".to_string())), "opus");
+        assert_eq!(audio_extract_format(&None), "mp3");
+    }
+
+    #[test]
+    fn audio_quality_flag_lossy_only() {
+        assert_eq!(
+            audio_quality_flag(
+                &"mp3".to_string(),
+                &Some("mp3".to_string()),
+                &Some("192K".to_string())
+            ),
+            Some("192K".to_string())
+        );
+        // Lossless containers and ALAC never take a bitrate.
+        assert_eq!(
+            audio_quality_flag(
+                &"flac".to_string(),
+                &Some("flac".to_string()),
+                &Some("192K".to_string())
+            ),
+            None
+        );
+        assert_eq!(
+            audio_quality_flag(
+                &"m4a".to_string(),
+                &Some("alac".to_string()),
+                &Some("320K".to_string())
+            ),
+            None
+        );
+        assert_eq!(
+            audio_quality_flag(&"mp3".to_string(), &Some("mp3".to_string()), &None),
+            None
+        );
     }
 
     #[test]
