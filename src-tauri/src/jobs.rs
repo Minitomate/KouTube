@@ -17,8 +17,22 @@ use tokio::sync::Mutex;
 
 use crate::tools;
 
-const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Watchdog budgets. Download phase needs both pipes quiet: stdout carries
+/// progress, stderr carries retry chatter, and a recovering download must
+/// survive. Merge phase: ffmpeg speaks only on stderr.
+const STDOUT_QUIET_KILL: Duration = Duration::from_secs(60);
+const STDERR_QUIET_KILL: Duration = Duration::from_secs(30);
+const MERGE_QUIET_KILL: Duration = Duration::from_secs(120);
 const MAX_RETRIES: u32 = 3;
+
+/// Pure watchdog decision, unit-tested at the boundaries.
+fn stalled(no_stdout: Duration, no_stderr: Duration, merging: bool) -> bool {
+    if merging {
+        no_stderr > MERGE_QUIET_KILL
+    } else {
+        no_stdout > STDOUT_QUIET_KILL && no_stderr > STDERR_QUIET_KILL
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct DownloadSpec {
@@ -677,7 +691,7 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
             "--socket-timeout".to_string(),
             "15".to_string(),
             "--retries".to_string(),
-            "2".to_string(),
+            "5".to_string(),
             "--ffmpeg-location".to_string(),
             ffdir,
             "-o".to_string(),
@@ -704,7 +718,7 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         "--socket-timeout".to_string(),
         "15".to_string(),
         "--retries".to_string(),
-        "2".to_string(),
+        "5".to_string(),
         "--ffmpeg-location".to_string(),
         ffdir,
         "-f".to_string(),
@@ -1023,14 +1037,20 @@ async fn run_once(
     // ffmpeg progress arrives on STDERR: drain it (never block the pipe),
     // timestamp it for the merge watchdog, and keep a tail so failures quote
     // yt-dlp's own diagnostics instead of dying silent.
+    // Any child output is liveness: stderr also refreshes the download-phase
+    // timer, so a download riding out retries is never killed mid-recovery.
     let last_io = Arc::new(Mutex::new(Instant::now()));
+    let last_out = Arc::new(Mutex::new(Instant::now()));
     {
         let last_io = last_io.clone();
+        let last_out = last_out.clone();
         let err_tail = err_tail.clone();
         tauri::async_runtime::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Some(l) = lines.next_line().await.unwrap_or(None) {
-                *last_io.lock().await = Instant::now();
+                let now = Instant::now();
+                *last_io.lock().await = now;
+                *last_out.lock().await = now;
                 let mut guard = err_tail.lock().await;
                 guard.push(l);
                 if guard.len() > 20 {
@@ -1042,7 +1062,6 @@ async fn run_once(
     }
 
     let mut reader = BufReader::new(stdout).lines();
-    let mut last_out = Instant::now();
     let mut final_path: Option<String> = None;
     let mut merging = false;
     let mut logged_unparsed = false;
@@ -1051,13 +1070,26 @@ async fn run_once(
         match line {
             Err(_) => {
                 // 1s tick: watchdog check without blocking output.
-                let quiet = last_out.elapsed() > IDLE_TIMEOUT;
-                let merge_quiet = { *last_io.lock().await }.elapsed() > Duration::from_secs(120);
-                if (quiet && !merging) || (merging && merge_quiet) {
-                    blog(format!("watchdog kill job={job_id} merging={merging}"));
+                let no_out = last_out.lock().await.elapsed();
+                let no_err = last_io.lock().await.elapsed();
+                if stalled(no_out, no_err, merging) {
+                    if merging {
+                        blog(format!(
+                            "watchdog kill job={job_id} merging=true quiet={no_err:?}"
+                        ));
+                        kill_tree(job_id).await;
+                        let _ = child.wait().await;
+                        return Err(anyhow!(
+                            "stalled: merge produced no output for {}s",
+                            no_err.as_secs()
+                        ));
+                    }
+                    blog(format!(
+                        "watchdog kill job={job_id} merging=false quiet_out={no_out:?} quiet_err={no_err:?}"
+                    ));
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
-                    return Err(anyhow!("stalled: no progress (merging heartbeat lost)"));
+                    return Err(anyhow!("stalled: no progress for {}s", no_out.as_secs()));
                 }
                 if is_cancelled(job_id).await {
                     kill_tree(job_id).await;
@@ -1085,7 +1117,7 @@ async fn run_once(
             }
             Ok(Ok(None)) => break, // EOF
             Ok(Ok(Some(l))) => {
-                last_out = Instant::now();
+                *last_out.lock().await = Instant::now();
                 let ev = parse_progress(&l).or_else(|| {
                     // Fallback: any percent in a [download] line counts, even
                     // when speed/ETA decorations differ by yt-dlp version.
@@ -1319,6 +1351,22 @@ mod tests {
         assert!(!multi);
         let (fmt, _) = build_format(&serde_json::json!("best"), "mp3", &None, &[]);
         assert_eq!(fmt, "bestaudio/best");
+    }
+
+    #[test]
+    fn watchdog_fires_on_dual_budgets() {
+        let s = Duration::from_secs;
+        // Download phase: both pipes quiet kills…
+        assert!(stalled(s(61), s(31), false));
+        // …but fresh stderr (active recovery) survives stdout silence…
+        assert!(!stalled(s(61), s(5), false));
+        // …and fresh stdout survives on its own.
+        assert!(!stalled(s(5), s(31), false));
+        // Boundaries are exclusive.
+        assert!(!stalled(s(60), s(30), false));
+        // Merge phase only watches stderr.
+        assert!(stalled(s(0), s(121), true));
+        assert!(!stalled(s(0), s(30), true));
     }
 
     #[test]
