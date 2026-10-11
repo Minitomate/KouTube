@@ -141,12 +141,15 @@ test.describe('container and codec options', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await app.pickFormat('audio');
+    // Select captions in video mode, then switch: the picker hides in audio
+    // mode and the stale selection must not leak into prepare.
     await app.pickCaptions('en - English');
+    await app.pickFormat('audio');
+    await expect(page.locator('[aria-labelledby="md-captions"]')).toHaveCount(0);
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
     expect(posted).toMatchObject({ embedCaptions: [] });
-    await expect(page.getByText(/Captions are skipped for audio-only/)).toBeVisible();
+    await expect(page.getByText(/Audio only — no captions/)).toBeVisible();
   });
 
   test('missing dub fails loudly with the language named', async ({ page }) => {

@@ -152,6 +152,38 @@ async fn finalize_file(spec: &DownloadSpec, path: Option<String>) -> Option<Stri
         Ok(()) => final_path.to_string_lossy().to_string(),
         Err(_) => path,
     };
+    // Audio-only: the extractor should have removed its source, but kills and
+    // failed attempts leave same-stem leftovers (source webm, .part files).
+    // Remove them so a stale webm never sits next to the product. Scoped to
+    // this job's stem and non-audio extensions; the product itself, sidecar
+    // subs, and every other stem are untouched.
+    if AUDIO_ONLY.contains(&spec.container.as_str()) {
+        const LEFTOVER_EXTS: [&str; 5] = ["webm", "mkv", "mp4", "mov", "avi"];
+        let prefix = format!("{stem}.");
+        if let Ok(entries) = std::fs::read_dir(&parent) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p == final_path {
+                    continue;
+                }
+                let name = match p.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if !name.starts_with(&prefix) {
+                    continue;
+                }
+                let dead_ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| LEFTOVER_EXTS.contains(&e));
+                let dead_part = name.ends_with(".part");
+                if dead_ext || dead_part {
+                    let _ = std::fs::remove_file(&p);
+                }
+            }
+        }
+    }
     if spec.split_kinds && !spec.captions_only && !spec.captions.is_empty() {
         let cap_dir = parent.join("Captions");
         let _ = std::fs::create_dir_all(&cap_dir);
@@ -1392,8 +1424,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn finalize_cleans_audio_leftovers() {
+        let dir =
+            std::env::temp_dir().join(format!("koutube-test-leftovers-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let src = dir.join("Title [abc] [es].mp3");
+        std::fs::write(&src, "data").unwrap();
+        std::fs::write(dir.join("Title [abc] [es].webm"), "stale").unwrap();
+        std::fs::write(dir.join("Title [abc] [es].webm.part"), "stale").unwrap();
+        std::fs::write(dir.join("Title [abc] [es].en.srt"), "subs").unwrap();
+        std::fs::write(dir.join("Other [zzz].webm"), "untouched").unwrap();
+        let spec = DownloadSpec {
+            url: "https://www.youtube.com/watch?v=abc".to_string(),
+            video_id: Some("abc".to_string()),
+            container: "mp3".to_string(),
+            quality: serde_json::json!("best"),
+            codec: None,
+            audio_tracks: vec!["es".to_string()],
+            captions: vec![],
+            captions_only: false,
+            out_dir: dir.to_string_lossy().to_string(),
+            title: None,
+            overwrite: false,
+            split_kinds: false,
+        };
+        let out = finalize_file(&spec, Some(src.to_string_lossy().to_string())).await;
+        assert_eq!(out, Some(src.to_string_lossy().to_string()));
+        assert!(src.exists());
+        assert!(!dir.join("Title [abc] [es].webm").exists());
+        assert!(!dir.join("Title [abc] [es].webm.part").exists());
+        assert!(dir.join("Title [abc] [es].en.srt").exists());
+        assert!(dir.join("Other [zzz].webm").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn finalize_keeps_video_siblings() {
+        let dir =
+            std::env::temp_dir().join(format!("koutube-test-siblings-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let src = dir.join("Title [abc].mp4");
+        std::fs::write(&src, "data").unwrap();
+        std::fs::write(dir.join("Title [abc].webm"), "sibling").unwrap();
+        let spec = DownloadSpec {
+            url: "https://www.youtube.com/watch?v=abc".to_string(),
+            video_id: Some("abc".to_string()),
+            container: "mp4".to_string(),
+            quality: serde_json::json!("best"),
+            codec: None,
+            audio_tracks: vec![],
+            captions: vec![],
+            captions_only: false,
+            out_dir: dir.to_string_lossy().to_string(),
+            title: None,
+            overwrite: false,
+            split_kinds: false,
+        };
+        let _ = finalize_file(&spec, Some(src.to_string_lossy().to_string())).await;
+        assert!(dir.join("Title [abc].webm").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn finalize_keeps_template_tagged_name() {
-        let dir = std::env::temp_dir().join(format!("koutube-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("koutube-test-tagged-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let src = dir.join("Title [abc] [es].mp3");
         std::fs::write(&src, "data").unwrap();
@@ -1419,7 +1513,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_captions_reports_absent_langs() {
-        let dir = std::env::temp_dir().join(format!("koutube-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("koutube-test-caps-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("Title [abc].en.srt"), "1").unwrap();
         let spec = DownloadSpec {

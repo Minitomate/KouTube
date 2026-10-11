@@ -85,14 +85,21 @@ export default function DownloadOptionsCard() {
           summaryNone="No audio"
         />
       )}
-      <MultiDropdown
-        label="Captions"
-        options={caps.map((c) => ({ id: c.id, label: c.label, badge: c.manual ? 'Manual-only' : undefined }))}
-        selected={captions}
-        onToggle={toggleCaption}
-        emptyText="No manual captions for this video."
-        summaryNone="None"
-      />
+      {format !== 'audio' && (
+        <MultiDropdown
+          label="Captions"
+          options={caps.map((c) => ({ id: c.id, label: c.label, badge: c.manual ? 'Manual-only' : undefined }))}
+          selected={captions}
+          onToggle={toggleCaption}
+          emptyText="No manual captions for this video."
+          summaryNone="None"
+        />
+      )}
+      {format === 'audio' && (
+        <p className="meta" style={{ marginTop: 12 }}>
+          Audio only — no captions are downloaded.
+        </p>
+      )}
     </div>
   );
 }
