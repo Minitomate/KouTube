@@ -212,6 +212,18 @@ describe('desktop adapter', () => {
     expect(byteRate([{ t: t0, p: 10 }], t0 + 1000)).toBeNull();
     expect(byteRate(samples, t0 + 10000)).toBeNull(); // stale window
   });
+
+  it('resolves launch sizes from memory, monitor, and defaults', async () => {
+    const { resolveWindowSize } = await import('./desktop');
+    expect(resolveWindowSize({ w: 1300, h: 850 }, 1920, 1080))
+      .toEqual({ w: 1300, h: 850 });
+    expect(resolveWindowSize(null, 1920, 1080)).toEqual({ w: 1280, h: 900 });
+    expect(resolveWindowSize({ w: 9999, h: 9999 }, 1920, 1080))
+      .toEqual({ w: 1840, h: 960 });
+    expect(resolveWindowSize({ w: 100, h: 100 }, 1920, 1080))
+      .toEqual({ w: 480, h: 700 });
+    expect(resolveWindowSize({ w: NaN, h: 850 }, 1920, 1080).w).toBe(480);
+  });
 });
 
 describe('resolveOutDir', () => {

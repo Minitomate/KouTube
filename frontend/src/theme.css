@@ -64,7 +64,7 @@ body {
   color: var(--on-surface);
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
-.app-shell { max-width: 1024px; margin: 0 auto; padding: 16px 16px 140px; }
+.app-shell { max-width: 1200px; margin: 0 auto; padding: 16px 16px 140px; }
 /* Focused single column for everything except the two-column inspect grid. */
 .app-shell > :not(.inspect-grid) { max-width: 640px; margin-left: auto; margin-right: auto; }
 .app-shell > .inspect-grid { max-width: none; }

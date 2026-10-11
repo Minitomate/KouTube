@@ -142,6 +142,26 @@ export async function getRecentLogs(): Promise<string[]> {
   return invoke('get_recent_logs') as Promise<string[]>;
 }
 
+export const DEFAULT_WINDOW_W = 1280;
+export const DEFAULT_WINDOW_H = 900;
+const MIN_WINDOW_W = 480;
+const MIN_WINDOW_H = 700;
+
+/** Launch size: remembered dimensions clamped to the current monitor,
+ * falling back to the defaults. Pure and unit-tested. */
+export function resolveWindowSize(
+  saved: { w: number; h: number } | null,
+  availW: number,
+  availH: number,
+): { w: number; h: number } {
+  const clamp = (v: number, lo: number, hi: number) =>
+    Math.min(Math.max(Number.isFinite(v) ? v : lo, lo), Math.max(hi, lo));
+  return {
+    w: clamp(saved?.w ?? DEFAULT_WINDOW_W, MIN_WINDOW_W, availW - 80),
+    h: clamp(saved?.h ?? DEFAULT_WINDOW_H, MIN_WINDOW_H, availH - 120),
+  };
+}
+
 export async function startDesktopDownload(
   choice: DesktopChoice,
   outDir: string,

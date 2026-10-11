@@ -78,6 +78,7 @@ describe('settings store', () => {
     await saveSettings({
       ...DEFAULTS,
       showAdvanced: true,
+      windowSize: { w: 1300, h: 850 },
       downloadDefaults: {
         ...DEFAULTS.downloadDefaults, format: 'audio', audioContainer: 'flac', captionsFormat: 'vtt',
       },
@@ -85,6 +86,7 @@ describe('settings store', () => {
     const { settings, reset } = await loadSettings();
     expect(reset).toBe(false);
     expect(settings.showAdvanced).toBe(true);
+    expect(settings.windowSize).toEqual({ w: 1300, h: 850 });
     expect(settings.downloadDefaults.format).toBe('audio');
     expect(settings.downloadDefaults.audioContainer).toBe('flac');
     expect(settings.downloadDefaults.captionsFormat).toBe('vtt');
@@ -92,8 +94,17 @@ describe('settings store', () => {
 
   it('defaults the new fields on old stores', () => {
     expect(DEFAULTS.showAdvanced).toBe(false);
+    expect(DEFAULTS.windowSize).toBeNull();
     expect(DEFAULTS.downloadDefaults.format).toBe('video');
     expect(DEFAULTS.maxConcurrent).toBe(4);
+  });
+
+  it('recovers a corrupt window size without resetting everything', async () => {
+    backing.set('koutube-settings', JSON.stringify({ ...DEFAULTS, windowSize: { w: 'wide', h: null } }));
+    const { settings, reset } = await loadSettings();
+    expect(reset).toBe(false);
+    expect(settings.windowSize).toBeNull();
+    expect(settings.seed).toBe(DEFAULTS.seed);
   });
 
   it('resets corrupt stores loudly', async () => {

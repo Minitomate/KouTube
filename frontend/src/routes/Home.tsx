@@ -61,26 +61,48 @@ export default function Home() {
     };
   }, [set]);
 
-  // Desktop window: fit small screens, floor the minimum, center.
+  // Desktop window: remembered size (clamped to this monitor), else the
+  // default; min floor, centered. Resizes persist debounced for next launch.
   useEffect(() => {
     if (!isTauri()) return;
+    let dead = false;
+    let saveTimer: ReturnType<typeof setTimeout> | undefined;
+    let unlisten: (() => void) | undefined;
     (async () => {
       try {
         const win = await import('@tauri-apps/api/window');
+        const { loadSettings, saveSettings } = await import('../lib/settings');
+        const { resolveWindowSize } = await import('../lib/desktop');
         const current = win.getCurrentWindow();
         const monitor = await win.primaryMonitor();
         const avail = monitor?.size;
         const scale = monitor?.scaleFactor || 1;
         const availW = avail ? avail.width / scale : 1280;
         const availH = avail ? avail.height / scale : 900;
+        const { settings } = await loadSettings().catch(() => ({ settings: null as unknown as null }));
+        const size = resolveWindowSize(settings?.windowSize ?? null, availW, availH);
         await current.setMinSize(new win.LogicalSize(480, 700));
-        await current.setSize(new win.LogicalSize(
-          Math.round(Math.min(1120, availW - 80)),
-          Math.round(Math.min(900, availH - 120)),
-        ));
-        await current.center();
+        if (!dead) {
+          await current.setSize(new win.LogicalSize(size.w, size.h));
+          await current.center();
+        }
+        unlisten = await current.onResized(({ payload }) => {
+          if (dead) return;
+          if (saveTimer !== undefined) clearTimeout(saveTimer);
+          saveTimer = setTimeout(() => {
+            const logical = new win.PhysicalSize(payload.width, payload.height).toLogical(scale);
+            loadSettings()
+              .then(({ settings: s }) => saveSettings({ ...s, windowSize: { w: Math.round(logical.width), h: Math.round(logical.height) } }))
+              .catch(() => { /* next launch falls back to defaults */ });
+          }, 500);
+        });
       } catch { /* best effort: default window stands */ }
     })();
+    return () => {
+      dead = true;
+      if (saveTimer !== undefined) clearTimeout(saveTimer);
+      unlisten?.();
+    };
   }, []);
 
   function fail(message: string) {
