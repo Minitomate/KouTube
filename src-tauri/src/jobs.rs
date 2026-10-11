@@ -129,6 +129,35 @@ async fn finalize_file(spec: &DownloadSpec, path: Option<String>) -> Option<Stri
     Some(final_str)
 }
 
+/// Post-check for captions-only jobs: which requested langs landed on disk.
+/// yt-dlp names sidecars `{title} [{id}].{lang}.srt`; match on that segment.
+async fn missing_captions(spec: &DownloadSpec) -> Vec<String> {
+    let mut found: Vec<String> = vec![];
+    if let Ok(entries) = std::fs::read_dir(&spec.out_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
+                let vid_ok = match &spec.video_id {
+                    Some(id) => name.contains(id.as_str()),
+                    None => true,
+                };
+                let sub = name.ends_with(".srt") || name.ends_with(".vtt");
+                if vid_ok && sub {
+                    found.push(name.to_string());
+                }
+            }
+        }
+    }
+    spec.captions
+        .iter()
+        .filter(|l| {
+            !found
+                .iter()
+                .any(|n| n.contains(&format!(".{l}.")) || n.ends_with(&format!(".{l}")))
+        })
+        .cloned()
+        .collect()
+}
+
 /// List existing outputs mentioning a video id (overwrite pre-check).
 pub async fn existing_outputs(out_dir: &str, video_id: &str) -> Vec<String> {
     let mut out = vec![];
@@ -559,13 +588,13 @@ fn build_format(
     audio_langs: &[String],
 ) -> (String, bool) {
     if AUDIO_ONLY.contains(&container) {
-        // One language per audio job (callers loop per track): pin it with
-        // a `/bestaudio` fallback so a missing dub degrades instead of failing.
+        // Strict pin, no fallback: a per-track job tagged [lang] must never
+        // silently contain the original track. Missing dub = yt-dlp error.
         let audio = match audio_langs.first() {
-            Some(l) => format!("(bestaudio[language^={l}]/bestaudio)"),
-            None => "bestaudio".to_string(),
+            Some(l) => format!("bestaudio[language^={l}]"),
+            None => "bestaudio/best".to_string(),
         };
-        return (format!("{audio}/best"), false);
+        return (audio, false);
     }
     let mut video = format!("bestvideo{}", quality_cap(quality));
     if let Some(c) = codec.as_deref().and_then(vcodec_filter) {
@@ -741,6 +770,51 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                     .get(&job_id)
                     .and_then(|h| h.view.note.clone());
                 let final_path = finalize_file(&spec, done_path).await;
+                if spec.captions_only {
+                    // Same silent class as audio fallback: a requested lang with
+                    // no file must never pass as success.
+                    let missing = missing_captions(&spec).await;
+                    if missing.len() >= spec.captions.len() && !spec.captions.is_empty() {
+                        finish(
+                            &app,
+                            &job_id,
+                            JobView {
+                                status: "error".into(),
+                                title: spec.title.clone(),
+                                error: Some(format!(
+                                    "No subtitles downloaded (missing: {}).",
+                                    missing.join(", ")
+                                )),
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                        return;
+                    }
+                    let extra = if missing.is_empty() {
+                        format!("subtitles: {}", spec.captions.join(", "))
+                    } else {
+                        format!("missing subtitles: {}", missing.join(", "))
+                    };
+                    let note = Some(match note {
+                        Some(n) => format!("{n} · {extra}"),
+                        None => extra,
+                    });
+                    finish(
+                        &app,
+                        &job_id,
+                        JobView {
+                            status: "done".into(),
+                            percent: 100.0,
+                            title: spec.title.clone(),
+                            filepath: final_path,
+                            note,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+                    return;
+                }
                 finish(
                     &app,
                     &job_id,
@@ -845,6 +919,9 @@ async fn run_once(
             } else {
                 "retrying".into()
             },
+            note: spec
+                .captions_only
+                .then(|| format!("fetching subtitles: {}", spec.captions.join(", "))),
             ..Default::default()
         },
     )
@@ -1192,17 +1269,41 @@ mod tests {
     }
 
     #[test]
-    fn audio_pins_single_language_with_fallback() {
+    fn audio_pins_single_language_strict() {
+        // No fallback tail: a missing dub must error, never yield original.
         let (fmt, multi) = build_format(
             &serde_json::json!("best"),
             "mp3",
             &None,
             &["es".to_string()],
         );
-        assert!(fmt.contains("bestaudio[language^=es]/bestaudio"), "{fmt}");
+        assert_eq!(fmt, "bestaudio[language^=es]");
         assert!(!multi);
         let (fmt, _) = build_format(&serde_json::json!("best"), "mp3", &None, &[]);
         assert_eq!(fmt, "bestaudio/best");
+    }
+
+    #[tokio::test]
+    async fn missing_captions_reports_absent_langs() {
+        let dir = std::env::temp_dir().join(format!("koutube-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("Title [abc].en.srt"), "1").unwrap();
+        let spec = DownloadSpec {
+            url: "https://www.youtube.com/watch?v=abc".to_string(),
+            video_id: Some("abc".to_string()),
+            container: "srt".to_string(),
+            quality: serde_json::json!("best"),
+            codec: None,
+            audio_tracks: vec![],
+            captions: vec!["en".to_string(), "de".to_string()],
+            captions_only: true,
+            out_dir: dir.to_string_lossy().to_string(),
+            title: None,
+            overwrite: false,
+            split_kinds: false,
+        };
+        assert_eq!(missing_captions(&spec).await, vec!["de".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -122,4 +122,104 @@ test.describe('container and codec options', () => {
     await expect(page.getByText(/\[en\]\.mp3/)).toBeVisible();
     await expect(page.getByText(/\[es\]\.mp3/)).toBeVisible();
   });
+
+  test('audio mode strips captions from prepare', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    let posted: Record<string, unknown> | undefined;
+    await page.route('**/api/prepare', (r) => {
+      posted = r.request().postDataJSON() as Record<string, unknown>;
+      return r.fulfill({
+        json: {
+          filename: 'a.mp3', container: 'mp3', mergeRequired: false,
+          sizeEstimate: 4, streamToken: 's', muxToken: null, captions: [],
+        },
+      });
+    });
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: 'data', contentType: 'audio/mpeg' }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('audio');
+    await app.pickCaptions('en - English');
+    await app.download();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    expect(posted).toMatchObject({ embedCaptions: [] });
+    await expect(page.getByText(/Captions are skipped for audio-only/)).toBeVisible();
+  });
+
+  test('missing dub fails loudly with the language named', async ({ page }) => {
+    await page.route('**/api/resolve', (r) =>
+      r.fulfill({
+        json: {
+          ...manualOnly,
+          audioTracks: [
+            { lang: 'en', label: 'English (en)' },
+            { lang: 'es', label: 'Spanish (es)' },
+          ],
+        },
+      }),
+    );
+    await page.route('**/api/prepare', (r) => {
+      const body = r.request().postDataJSON() as { audioTrackLang?: string };
+      if (body.audioTrackLang === 'es') {
+        return r.fulfill({ status: 400, json: { detail: { code: 'no-formats', message: "No downloadable formats for these choices. no audio for language 'es'" } } });
+      }
+      return r.fulfill({
+        json: {
+          filename: 'song.mp3', container: 'mp3', mergeRequired: false,
+          sizeEstimate: 4, streamToken: 's', muxToken: null, captions: [],
+        },
+      });
+    });
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: 'data', contentType: 'audio/mpeg' }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('audio');
+    await app.pickAudioTrack('es');
+    await app.download();
+    // en still completes; es fails with the language named — one failure
+    // never aborts the rest.
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.job', { hasText: "no audio for language 'es'" })).toBeVisible();
+  });
+
+  test('batch enqueues all tracks upfront', async ({ page }) => {
+    await page.route('**/api/resolve', (r) =>
+      r.fulfill({
+        json: {
+          ...manualOnly,
+          audioTracks: [
+            { lang: 'en', label: 'English (en)' },
+            { lang: 'es', label: 'Spanish (es)' },
+          ],
+        },
+      }),
+    );
+    await page.route('**/api/prepare', (r) =>
+      r.fulfill({
+        json: {
+          filename: 'song.mp3', container: 'mp3', mergeRequired: false,
+          sizeEstimate: 4, streamToken: 's', muxToken: null, captions: [],
+        },
+      }),
+    );
+    await page.route('**/api/stream*', async (r) => {
+      await new Promise((s) => setTimeout(s, 800));
+      return r.fulfill({ status: 200, body: 'data', contentType: 'audio/mpeg' });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('audio');
+    await app.pickAudioTrack('es');
+    await app.download();
+    // Both cards exist while the first is still fetching — nothing trickles in.
+    await expect(page.locator('.job')).toHaveCount(2);
+    await expect(page.getByText('saved ✓')).toHaveCount(2, { timeout: 15_000 });
+  });
 });

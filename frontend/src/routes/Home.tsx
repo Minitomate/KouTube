@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import pLimit from 'p-limit';
 import { useStore, blankTransfer, tlog, effectiveQuality, type Transfer } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
 import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, pctRate, existingOutputs } from '../lib/desktop';
-import { loadSettings, saveSettings } from '../lib/settings';
+import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
 import Confirm from '../components/Confirm';
 import UrlBar from '../components/UrlBar';
 import MediaSkeleton from '../components/MediaSkeleton';
@@ -20,7 +21,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRefs = useRef(new Set<AbortController>());
   const desktopJobs = useRef(new Map<string, string>());
   const rateSamples = useRef(new Map<string, Array<{ t: number; p: number }>>());
   const batchCancelled = useRef(false);
@@ -88,6 +89,21 @@ export default function Home() {
     setCanCancel(false);
   }
 
+  /** Bounded pool: tasks run at most n at once, one failure never aborts the rest. */
+  function pool(tasks: Array<() => Promise<unknown>>, n: number): Promise<PromiseSettledResult<unknown>[]> {
+    const limit = pLimit(clampConcurrent(n));
+    return Promise.allSettled(tasks.map((t) => limit(t)));
+  }
+
+  async function concurrency(): Promise<number> {
+    try {
+      const { settings } = await loadSettings();
+      return clampConcurrent(settings.maxConcurrent);
+    } catch {
+      return 4;
+    }
+  }
+
   /** Effective container/quality/notes from codec availability + rules. */
   function planDownload(): { quality: string; container: string; notes: string[]; blocked?: string } {
     const notes: string[] = [];
@@ -101,6 +117,9 @@ export default function Home() {
     }
     if (format === 'audio' && audioTracks.length === 0) {
       return { quality: q, container: cont, notes, blocked: 'Select at least one audio track for audio mode.' };
+    }
+    if (format === 'audio' && captions.length > 0) {
+      notes.push('Captions are skipped for audio-only.');
     }
     if (format === 'video' && media && !media.isPlaylist) {
       const eff = effectiveQuality(media.formatCodecs, quality, codec);
@@ -116,23 +135,24 @@ export default function Home() {
     return { quality: q, container: cont, notes };
   }
 
-  async function downloadSingle(pageUrl: string, title: string, audioLang?: string) {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  async function downloadSingle(pageUrl: string, title: string, audioLang?: string, transferId?: string) {
+    // Pre-created id when the caller enqueued upfront; else mint one here.
+    const id = transferId ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const rid = Math.random().toString(36).slice(2) + Date.now().toString(36);
     const lang = audioLang ?? audioTracks[0] ?? 'original';
     const stage = (st: 'fetching' | 'finalizing', note?: string) => {
       const cur = useStore.getState().queue.find((q) => q.id === id);
       if (cur && cur.status === 'working') upsertTransfer({ ...cur, stage: st, note });
     };
+    const ctl = new AbortController();
+    abortRefs.current.add(ctl);
     try {
       upsertTransfer({ id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', rid });
       const plan = planDownload();
       if (plan.notes.length) setWarn(plan.notes.join(' '));
-      const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions });
+      const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions: format === 'audio' ? [] : captions });
       // Multi-track audio: one file per language, tagged so names never collide.
       const filename = format === 'audio' && audioTracks.length > 1 ? tagFilename(p.filename, lang) : p.filename;
-      const ctl = new AbortController();
-      abortRef.current = ctl;
       setCanCancel(true);
       upsertTransfer({ id, title: filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching', rid });
       if (p.warnings.length) setWarn(p.warnings.join(' '));
@@ -164,6 +184,8 @@ export default function Home() {
         upsertTransfer({ id, title, loaded: 0, total: null, status: 'error', error: message, stage: 'end', rid });
         throw new Error(message);
       }
+    } finally {
+      abortRefs.current.delete(ctl);
     }
   }
 
@@ -184,6 +206,7 @@ export default function Home() {
     }
     setBusy(true);
     try {
+      const max = await concurrency();
       if (format === 'captions') {
         await downloadSubs();
       } else if (media?.isPlaylist && media.entries?.length) {
@@ -195,38 +218,49 @@ export default function Home() {
         const langs = format === 'audio' && audioTracks.length > 1
           ? audioTracks
           : [audioTracks[0] ?? 'original'];
+        const combos = items.flatMap((e) => langs.map((lang) => ({ e, lang })));
+        // Enqueue everything upfront so batch progress is visible at once.
+        combos.forEach((c, k) => upsertTransfer({
+          id: `zip-${k}`, title: c.e.title || c.e.videoId,
+          loaded: 0, total: null, status: 'working', stage: 'preparing',
+        }));
         const zipItems: { id: string; filename: string; url: string; sizeEstimate: number | null }[] = [];
-        for (const e of items) {
-          const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
-          for (const lang of langs) {
-            const id = `zip-${zipItems.length}`;
-            upsertTransfer({ id, title: e.title || e.videoId, loaded: 0, total: null, status: 'working', stage: 'preparing' });
-            try {
-              const plan = planDownload();
-              if (plan.notes.length) setWarn(plan.notes.join(' '));
-              const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions });
-              const filename = langs.length > 1 ? tagFilename(p.filename, lang) : p.filename;
-              upsertTransfer({ id, title: filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching' });
-              zipItems.push({ id, filename, url: transferUrl(p), sizeEstimate: p.sizeEstimate });
-            } catch (e2) {
-              upsertTransfer({
-                id, title: e.title || e.videoId, loaded: 0, total: null,
-                status: 'error', error: e2 instanceof Error ? e2.message : 'prepare failed', stage: 'end',
-              });
-            }
+        const noCaps = format === 'audio' ? [] : captions;
+        await pool(combos.map((c, k) => async () => {
+          if (batchCancelled.current) return;
+          const id = `zip-${k}`;
+          const pageUrl = `https://www.youtube.com/watch?v=${c.e.videoId}`;
+          try {
+            const plan = planDownload();
+            if (plan.notes.length) setWarn(plan.notes.join(' '));
+            const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: c.lang, captions: noCaps });
+            const filename = langs.length > 1 ? tagFilename(p.filename, c.lang) : p.filename;
+            upsertTransfer({ id, title: filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching' });
+            zipItems.push({ id, filename, url: transferUrl(p), sizeEstimate: p.sizeEstimate });
+          } catch (e2) {
+            upsertTransfer({
+              id, title: c.e.title || c.e.videoId, loaded: 0, total: null,
+              status: 'error', error: e2 instanceof Error ? e2.message : 'prepare failed', stage: 'end',
+            });
           }
-        }
+        }), max);
         const ok = zipItems.filter((it) => useStore.getState().queue.some((q) => q.id === it.id && q.status !== 'error'));
         if (!ok.length) return fail('No playlist items could be prepared.');
-        await downloadZip(
-          `${media.title || 'playlist'}.zip`, zipItems,
-          (i, loaded, total) => {
-            const it = zipItems[i];
-            upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
-          },
-          () => {},
-          abortRef.current?.signal,
-        );
+        const zipCtl = new AbortController();
+        abortRefs.current.add(zipCtl);
+        try {
+          await downloadZip(
+            `${media.title || 'playlist'}.zip`, zipItems,
+            (i, loaded, total) => {
+              const it = zipItems[i];
+              upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
+            },
+            () => {},
+            zipCtl.signal,
+          );
+        } finally {
+          abortRefs.current.delete(zipCtl);
+        }
         for (const it of zipItems) {
           const cur = useStore.getState().queue.find((q) => q.id === it.id);
           if (cur?.status === 'working') {
@@ -234,9 +268,16 @@ export default function Home() {
           }
         }
       } else if (format === 'audio' && audioTracks.length > 1) {
-        for (const lang of audioTracks) {
-          await downloadSingle(url, media?.title ?? url, lang);
-        }
+        const title = media?.title ?? url;
+        const ids = audioTracks.map((_, k) => `trk-${Date.now()}-${k}`);
+        ids.forEach((id) => upsertTransfer({
+          id, title, loaded: 0, total: null,
+          status: 'working', stage: 'preparing',
+        }));
+        await pool(audioTracks.map((lang, k) => async () => {
+          if (batchCancelled.current) return;
+          await downloadSingle(url, title, lang, ids[k]);
+        }), max);
       } else {
         await downloadSingle(url, media?.title ?? url);
       }
@@ -283,20 +324,25 @@ export default function Home() {
       }
       return;
     }
-    abortRef.current = new AbortController();
+    const zipCtl = new AbortController();
+    abortRefs.current.add(zipCtl);
     setCanCancel(true);
     for (const it of zipItems) {
       upsertTransfer({ id: it.id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'preparing' });
     }
-    await downloadZip(
-      `${media?.title || 'captions'}.zip`, zipItems,
-      (i, loaded, total) => {
-        const it = zipItems[i];
-        upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
-      },
-      () => {},
-      abortRef.current?.signal,
-    );
+    try {
+      await downloadZip(
+        `${media?.title || 'captions'}.zip`, zipItems,
+        (i, loaded, total) => {
+          const it = zipItems[i];
+          upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
+        },
+        () => {},
+        zipCtl.signal,
+      );
+    } finally {
+      abortRefs.current.delete(zipCtl);
+    }
     for (const it of zipItems) {
       const cur = useStore.getState().queue.find((q) => q.id === it.id);
       if (cur?.status === 'working') {
@@ -306,7 +352,8 @@ export default function Home() {
   }
 
   function cancel() {
-    abortRef.current?.abort();
+    abortRefs.current.forEach((c) => c.abort());
+    abortRefs.current.clear();
     batchCancelled.current = true;
     const ids = [...desktopJobs.current.values()];
     desktopJobs.current.clear();
@@ -330,7 +377,7 @@ export default function Home() {
     const plan = planDownload();
     if (plan.blocked) { setError(plan.blocked); return; }
     if (plan.notes.length) setWarn(plan.notes.join(' '));
-    // Resolves only on terminal events so playlist items run sequentially.
+    // Resolves only on terminal events so batched items can run pooled.
     let stopFn = () => {};
     const resolveRef: { current: null | (() => void) } = { current: null };
     const done = new Promise<void>((resolve) => { resolveRef.current = resolve; });
@@ -339,7 +386,8 @@ export default function Home() {
       upsertTransfer(tlog({ ...(cur ?? blankTransfer(transferId, title)), ...t }, line));
       desktopJobs.current.delete(transferId);
       if (!desktopJobs.current.size) setCanCancel(false);
-      setBusy(false);
+      // Pooled jobs: only the last one out clears the CTA.
+      if (!useStore.getState().queue.some((q) => q.status === 'working')) setBusy(false);
       stopFn(); resolveRef.current?.();
     };
     startDesktopDownload(
@@ -348,7 +396,9 @@ export default function Home() {
         kind: extra?.captionsOnly ? 'captions' : format,
         outputContainer: plan.container,
         quality: plan.quality, codec,
-        audioTracks: extra?.audioTracks ?? audioTracks, captions,
+        audioTracks: extra?.audioTracks ?? audioTracks,
+        // Audio-only never carries captions (they'd embed into every track).
+        captions: format === 'audio' && !extra?.captionsOnly ? [] : captions,
         overwrite: extra?.overwrite ?? false, splitKinds: extra?.splitKinds ?? false,
       },
       outDir,
@@ -398,9 +448,11 @@ export default function Home() {
     }
     let outDir: string;
     let splitKinds = false;
+    let maxConc = 4;
     try {
       const { settings } = await loadSettings();
       splitKinds = settings.splitKinds;
+      maxConc = clampConcurrent(settings.maxConcurrent);
       outDir = settings.outDir || await resolveOutDir();
       if (settings.splitKinds) {
         const sub = format === 'audio' ? 'Audio' : format === 'captions' ? 'Captions' : 'Video';
@@ -424,42 +476,50 @@ export default function Home() {
     setBusy(true);
     batchCancelled.current = false;
     try {
+      const max = maxConc;
       const multiAudio = format === 'audio' && audioTracks.length > 1;
+      type DeskTask = {
+        pageUrl: string; title: string; id: string;
+        extra: { videoId?: string; overwrite: boolean; splitKinds: boolean; audioTracks?: string[]; captionsOnly?: boolean };
+      };
+      const tasks: DeskTask[] = [];
+      const stamp = Date.now();
       if (media?.isPlaylist && media.entries?.length) {
-        // Desktop playlist: sequential singles into the chosen folder.
-        batchCancelled.current = false;
         const items = media.entries.slice(0, ZIP_CAP);
-        for (const [i, e] of items.entries()) {
-          if (batchCancelled.current) break;
+        items.forEach((e, i) => {
           const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
-          try {
-            if (format === 'captions') {
-              await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`, { videoId: e.videoId, overwrite, splitKinds, captionsOnly: true });
-            } else if (multiAudio) {
-              for (const lang of audioTracks) {
-                if (batchCancelled.current) break;
-                await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}-${lang}`, { videoId: e.videoId, overwrite, splitKinds, audioTracks: [lang] });
-              }
-            } else {
-              await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`, { videoId: e.videoId, overwrite, splitKinds });
+          const title = e.title || e.videoId;
+          if (format === 'captions') {
+            tasks.push({ pageUrl, title, id: `desk-${stamp}-${i}`, extra: { videoId: e.videoId, overwrite, splitKinds, captionsOnly: true } });
+          } else if (multiAudio) {
+            for (const lang of audioTracks) {
+              tasks.push({ pageUrl, title, id: `desk-${stamp}-${i}-${lang}`, extra: { videoId: e.videoId, overwrite, splitKinds, audioTracks: [lang] } });
             }
-          } catch (err) {
-            setError(err instanceof Error ? err.message : 'Item failed');
+          } else {
+            tasks.push({ pageUrl, title, id: `desk-${stamp}-${i}`, extra: { videoId: e.videoId, overwrite, splitKinds } });
           }
-        }
+        });
       } else if (format === 'captions') {
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        await downloadDesktopOne(url, media?.title ?? url, outDir, id, { videoId: media?.videoId, overwrite, splitKinds, captionsOnly: true });
+        tasks.push({ pageUrl: url, title: media?.title ?? url, id: `desk-${stamp}`, extra: { videoId: media?.videoId, overwrite, splitKinds, captionsOnly: true } });
       } else if (multiAudio) {
         for (const lang of audioTracks) {
-          if (batchCancelled.current) break;
-          const id = `${Date.now()}-${Math.random().toString(36).slice(2)}-${lang}`;
-          await downloadDesktopOne(url, media?.title ?? url, outDir, id, { videoId: media?.videoId, overwrite, splitKinds, audioTracks: [lang] });
+          tasks.push({ pageUrl: url, title: media?.title ?? url, id: `desk-${stamp}-${lang}`, extra: { videoId: media?.videoId, overwrite, splitKinds, audioTracks: [lang] } });
         }
       } else {
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        await downloadDesktopOne(url, media?.title ?? url, outDir, id, { videoId: media?.videoId, overwrite, splitKinds });
+        tasks.push({ pageUrl: url, title: media?.title ?? url, id: `desk-${stamp}`, extra: { videoId: media?.videoId, overwrite, splitKinds } });
       }
+      // Enqueue everything upfront so batch progress is visible at once.
+      for (const t of tasks) {
+        upsertTransfer(tlog(blankTransfer(t.id, t.title), 'queued'));
+      }
+      await pool(tasks.map((t) => async () => {
+        if (batchCancelled.current) return;
+        try {
+          await downloadDesktopOne(t.pageUrl, t.title, outDir, t.id, t.extra);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Item failed');
+        }
+      }), max);
       set({ step: 2 });
     } catch (e) {
       upsertTransfer({ id: 'desk-batch', title: url, loaded: 0, total: null, status: 'error', error: e instanceof Error ? e.message : 'failed', stage: 'end' });

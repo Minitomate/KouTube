@@ -35,9 +35,12 @@ async def prepare(req: PrepareRequest, request: Request):
             "message": "Playlist URL: prepare each video separately for ZIP batch."})
     try:
         streams = Y.pick_streams(info, req.container, req.quality, req.audioTrackLang, req.codec)
-    except ValueError:
+    except ValueError as exc:
+        detail = str(exc)
+        msg = ("No downloadable formats for these choices."
+               + (f" {detail}" if detail and detail != "no-formats" else ""))
         raise HTTPException(status_code=400, detail={
-            "code": "no-formats", "message": "No downloadable formats for these choices."})
+            "code": "no-formats", "message": msg})
     # Manual captions only: intersect requested langs with actual manual tracks.
     manual_langs = {c.lang for c in Y.filter_manual_captions(info)}
     embed = [lang for lang in (req.embedCaptions or []) if lang in manual_langs]

@@ -70,4 +70,19 @@ test.describe('settings tab', () => {
     await page.getByRole('button', { name: 'Download', exact: true }).click();
     await expect(page.getByLabel('YouTube URL')).toBeVisible();
   });
+
+  test('concurrency stepper persists', async ({ page }) => {
+    const app = new KouTubePage(page);
+    await app.goto();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByText('Max concurrent downloads')).toBeVisible();
+    await expect(page.getByLabel('4 concurrent downloads')).toBeVisible();
+    await page.getByRole('button', { name: 'More concurrent downloads' }).click();
+    await expect(page.getByLabel('5 concurrent downloads')).toBeVisible();
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByLabel('5 concurrent downloads')).toBeVisible();
+    await page.getByRole('button', { name: 'Fewer concurrent downloads' }).click();
+    await expect(page.getByLabel('4 concurrent downloads')).toBeVisible();
+  });
 });

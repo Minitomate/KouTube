@@ -320,6 +320,13 @@ def pick_streams(info: dict, container: str, quality: int | str,
         return direct or pool
 
     if audio_only:
+        if audio_lang and not any(
+            (f.get("language") or "").startswith(audio_lang)
+            for f in formats if (f.get("acodec") or "none") != "none"
+        ):
+            # Loud, not fallback: a per-track job tagged [lang] must never
+            # silently contain the original track's audio.
+            raise ValueError(f"no audio for language '{audio_lang}'")
         pool = audio_pool()
         if not pool:
             raise ValueError("no-formats")

@@ -16,9 +16,16 @@ export const SettingsSchema = z.object({
   theme: z.enum(['light', 'dark', 'auto']).default('auto'),
   seed: z.string().default('#6750A4'),
   variant: z.enum(['tonal-spot', 'vibrant', 'expressive']).default('tonal-spot'),
+  maxConcurrent: z.number().int().min(1).max(8).default(4),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 export type MoodVariant = Settings['variant'];
+
+/** Clamp stored garbage to the 1–8 pool range (default 4). */
+export function clampConcurrent(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : 4;
+  return Math.min(8, Math.max(1, v));
+}
 
 export const DEFAULTS: Settings = SettingsSchema.parse({});
 

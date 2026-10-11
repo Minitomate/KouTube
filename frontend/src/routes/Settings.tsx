@@ -91,6 +91,14 @@ export default function Settings() {
           />
           Separate audio and video into Audio/ and Video/ subfolders
         </label>
+        <div className="row" style={{ marginTop: 12 }}>
+          <span className="meta" id="concurrency-label">Max concurrent downloads</span>
+          <div className="segmented" role="group" aria-labelledby="concurrency-label">
+            <button aria-label="Fewer concurrent downloads" onClick={() => update({ maxConcurrent: Math.max(1, settings.maxConcurrent - 1) })}>−</button>
+            <button aria-label="More concurrent downloads" onClick={() => update({ maxConcurrent: Math.min(8, settings.maxConcurrent + 1) })}>+</button>
+          </div>
+          <span className="meta" aria-live="polite" aria-label={`${settings.maxConcurrent} concurrent downloads`}>{settings.maxConcurrent}</span>
+        </div>
       </div>
       <div className="card">
         <h2>Appearance</h2>
