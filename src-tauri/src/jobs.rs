@@ -386,7 +386,7 @@ fn sidecar_command(program: &std::path::Path) -> tokio::process::Command {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut std_cmd = std::process::Command::new(program);
         std_cmd.creation_flags(CREATE_NO_WINDOW);
-        tokio::process::Command::from_std(std_cmd)
+        tokio::process::Command::from(std_cmd)
     }
     #[cfg(not(windows))]
     {
