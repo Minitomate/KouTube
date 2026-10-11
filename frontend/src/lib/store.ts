@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { MediaInfo } from './api';
 
-export type Format = 'video' | 'audio';
+export type Format = 'video' | 'audio' | 'captions';
 export type TransferStatus = 'working' | 'done' | 'error' | 'cancelled';
 export type TransferStage = 'preparing' | 'fetching' | 'finalizing' | 'zipping' | 'end';
 export interface Transfer {

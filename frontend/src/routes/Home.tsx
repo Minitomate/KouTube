@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore, blankTransfer, tlog, effectiveQuality, type Transfer } from '../lib/store';
 import { api } from '../lib/api';
-import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA } from '../lib/transfer';
-import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, getRecentLogs, mapDesktopEvent, pctRate, existingOutputs } from '../lib/desktop';
+import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
+import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, pctRate, existingOutputs } from '../lib/desktop';
 import { loadSettings, saveSettings } from '../lib/settings';
 import Confirm from '../components/Confirm';
 import UrlBar from '../components/UrlBar';
@@ -93,6 +93,12 @@ export default function Home() {
     const notes: string[] = [];
     let cont: string = format === 'audio' ? 'mp3' : container;
     let q = quality;
+    if (format === 'captions') {
+      if (captions.length === 0) {
+        return { quality: q, container: 'srt', notes, blocked: 'Select at least one caption language for captions mode.' };
+      }
+      return { quality: q, container: 'srt', notes };
+    }
     if (format === 'audio' && audioTracks.length === 0) {
       return { quality: q, container: cont, notes, blocked: 'Select at least one audio track for audio mode.' };
     }
@@ -110,9 +116,10 @@ export default function Home() {
     return { quality: q, container: cont, notes };
   }
 
-  async function downloadSingle(pageUrl: string, title: string) {
+  async function downloadSingle(pageUrl: string, title: string, audioLang?: string) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const rid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const lang = audioLang ?? audioTracks[0] ?? 'original';
     const stage = (st: 'fetching' | 'finalizing', note?: string) => {
       const cur = useStore.getState().queue.find((q) => q.id === id);
       if (cur && cur.status === 'working') upsertTransfer({ ...cur, stage: st, note });
@@ -121,14 +128,16 @@ export default function Home() {
       upsertTransfer({ id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', rid });
       const plan = planDownload();
       if (plan.notes.length) setWarn(plan.notes.join(' '));
-      const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: audioTracks[0] ?? 'original', captions });
+      const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions });
+      // Multi-track audio: one file per language, tagged so names never collide.
+      const filename = format === 'audio' && audioTracks.length > 1 ? tagFilename(p.filename, lang) : p.filename;
       const ctl = new AbortController();
       abortRef.current = ctl;
       setCanCancel(true);
-      upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching', rid });
+      upsertTransfer({ id, title: filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching', rid });
       if (p.warnings.length) setWarn(p.warnings.join(' '));
-      await downloadToDisk(transferUrl(p), p.filename, p.sizeEstimate,
-        (loaded, total) => upsertTransfer({ id, title: p.filename, loaded, total, status: 'working', stage: 'fetching', rid }),
+      await downloadToDisk(transferUrl(p), filename, p.sizeEstimate,
+        (loaded, total) => upsertTransfer({ id, title: filename, loaded, total, status: 'working', stage: 'fetching', rid }),
         ctl.signal, { requestId: rid, onStage: stage,
           directUrl: p.mergeRequired ? undefined : (p.videoUrl ?? undefined),
           noProbe: p.mergeRequired,
@@ -146,7 +155,7 @@ export default function Home() {
               upsertTransfer({ ...cur, loaded: sLoaded, total: sTotal, note });
             }
           } });
-      upsertTransfer({ id, title: p.filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done', stage: 'end', rid });
+      upsertTransfer({ id, title: filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done', stage: 'end', rid });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
         upsertTransfer({ id, title, loaded: 0, total: null, status: 'cancelled', stage: 'end', rid });
@@ -175,45 +184,58 @@ export default function Home() {
     }
     setBusy(true);
     try {
-      if (media?.isPlaylist && media.entries?.length) {
+      if (format === 'captions') {
+        await downloadSubs();
+      } else if (media?.isPlaylist && media.entries?.length) {
         const items = media.entries.slice(0, ZIP_CAP);
         if (media.entries.length > ZIP_CAP) {
           setError(`ZIP capped at first ${ZIP_CAP} of ${media.entries.length} videos.`);
         }
-        const zipItems: { filename: string; url: string; sizeEstimate: number | null }[] = [];
-        for (const [i, e] of items.entries()) {
+        // Multi-track audio: one prepared file per (video, language).
+        const langs = format === 'audio' && audioTracks.length > 1
+          ? audioTracks
+          : [audioTracks[0] ?? 'original'];
+        const zipItems: { id: string; filename: string; url: string; sizeEstimate: number | null }[] = [];
+        for (const e of items) {
           const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
-          const id = `zip-${i}`;
-          upsertTransfer({ id, title: e.title || e.videoId, loaded: 0, total: null, status: 'working', stage: 'preparing' });
-          try {
-            const plan = planDownload();
-            if (plan.notes.length) setWarn(plan.notes.join(' '));
-            const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: audioTracks[0] ?? 'original', captions });
-            upsertTransfer({ id, title: p.filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching' });
-            zipItems.push({ filename: p.filename, url: transferUrl(p), sizeEstimate: p.sizeEstimate });
-          } catch (e2) {
-            upsertTransfer({
-              id, title: e.title || e.videoId, loaded: 0, total: null,
-              status: 'error', error: e2 instanceof Error ? e2.message : 'prepare failed', stage: 'end',
-            });
+          for (const lang of langs) {
+            const id = `zip-${zipItems.length}`;
+            upsertTransfer({ id, title: e.title || e.videoId, loaded: 0, total: null, status: 'working', stage: 'preparing' });
+            try {
+              const plan = planDownload();
+              if (plan.notes.length) setWarn(plan.notes.join(' '));
+              const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions });
+              const filename = langs.length > 1 ? tagFilename(p.filename, lang) : p.filename;
+              upsertTransfer({ id, title: filename, loaded: 0, total: p.sizeEstimate, status: 'working', stage: 'fetching' });
+              zipItems.push({ id, filename, url: transferUrl(p), sizeEstimate: p.sizeEstimate });
+            } catch (e2) {
+              upsertTransfer({
+                id, title: e.title || e.videoId, loaded: 0, total: null,
+                status: 'error', error: e2 instanceof Error ? e2.message : 'prepare failed', stage: 'end',
+              });
+            }
           }
         }
-        const ok = zipItems.filter((_, i) => useStore.getState().queue.some((q) => q.id === `zip-${i}` && q.status !== 'error'));
+        const ok = zipItems.filter((it) => useStore.getState().queue.some((q) => q.id === it.id && q.status !== 'error'));
         if (!ok.length) return fail('No playlist items could be prepared.');
         await downloadZip(
           `${media.title || 'playlist'}.zip`, zipItems,
           (i, loaded, total) => {
             const it = zipItems[i];
-            upsertTransfer({ id: `zip-${i}`, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
+            upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
           },
           () => {},
           abortRef.current?.signal,
         );
-        for (let i = 0; i < zipItems.length; i++) {
-          const cur = useStore.getState().queue.find((q) => q.id === `zip-${i}`);
+        for (const it of zipItems) {
+          const cur = useStore.getState().queue.find((q) => q.id === it.id);
           if (cur?.status === 'working') {
             upsertTransfer({ ...cur, status: 'done' });
           }
+        }
+      } else if (format === 'audio' && audioTracks.length > 1) {
+        for (const lang of audioTracks) {
+          await downloadSingle(url, media?.title ?? url, lang);
         }
       } else {
         await downloadSingle(url, media?.title ?? url);
@@ -227,26 +249,59 @@ export default function Home() {
     }
   }
 
-  async function copyDebugLog() {
-    try {
-      const lines: string[] = [];
-      for (const q of queue) {
-        lines.push(`## ${q.title} [${q.status}/${q.stage}]`);
-        for (const l of q.log ?? []) lines.push(`  ${l}`);
-        if (q.error) lines.push(`  error: ${q.error}`);
+  /** Captions-only (web): one .srt per language, zipped when several. */
+  async function downloadSubs() {
+    const videos: { pageUrl: string; title: string; videoId?: string }[] =
+      media?.isPlaylist && media.entries?.length
+        ? media.entries.slice(0, ZIP_CAP).map((e) => ({
+          pageUrl: `https://www.youtube.com/watch?v=${e.videoId}`,
+          title: e.title || e.videoId, videoId: e.videoId,
+        }))
+        : [{ pageUrl: url, title: media?.title ?? url, videoId: media?.videoId }];
+    if (media?.isPlaylist && (media.entries?.length ?? 0) > ZIP_CAP) {
+      setError(`ZIP capped at first ${ZIP_CAP} of ${media.entries?.length} videos.`);
+    }
+    const zipItems = videos.flatMap((v, i) => captions.map((lang, j) => ({
+      id: `zip-${i}-${j}`,
+      filename: srtFilename(v.title, v.videoId, lang),
+      url: subsUrl(v.pageUrl, lang),
+      sizeEstimate: null as number | null,
+    })));
+    if (zipItems.length === 1) {
+      const it = zipItems[0];
+      const id = `${Date.now()}-sub`;
+      upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'fetching' });
+      try {
+        const res = await fetch(it.url);
+        if (!res.ok) throw new Error(`Subtitles failed (HTTP ${res.status})`);
+        saveBlob(await res.blob(), it.filename);
+        upsertTransfer({ id, title: it.filename, loaded: 1, total: 1, status: 'done', stage: 'end' });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Download failed';
+        upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'error', error: message, stage: 'end' });
+        throw new Error(message);
       }
-      if (isTauri()) {
-        try {
-          const recent = await getRecentLogs();
-          lines.push('## backend recent');
-          for (const l of recent.slice(-40)) lines.push(`  ${l}`);
-        } catch { /* frontend log alone still helps */ }
+      return;
+    }
+    abortRef.current = new AbortController();
+    setCanCancel(true);
+    for (const it of zipItems) {
+      upsertTransfer({ id: it.id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'preparing' });
+    }
+    await downloadZip(
+      `${media?.title || 'captions'}.zip`, zipItems,
+      (i, loaded, total) => {
+        const it = zipItems[i];
+        upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'fetching' });
+      },
+      () => {},
+      abortRef.current?.signal,
+    );
+    for (const it of zipItems) {
+      const cur = useStore.getState().queue.find((q) => q.id === it.id);
+      if (cur?.status === 'working') {
+        upsertTransfer({ ...cur, status: 'done' });
       }
-      const text = lines.join('\n') || '(empty log)';
-      await navigator.clipboard.writeText(text);
-      setWarn('Debug log copied — paste it in your report.');
-    } catch {
-      setError('Could not copy the debug log.');
     }
   }
 
@@ -268,7 +323,7 @@ export default function Home() {
     title: string,
     outDir: string,
     transferId: string,
-    extra?: { videoId?: string; overwrite?: boolean; splitKinds?: boolean },
+    extra?: { videoId?: string; overwrite?: boolean; splitKinds?: boolean; audioTracks?: string[]; captionsOnly?: boolean },
   ): Promise<void> {
     const put = (t: Parameters<typeof upsertTransfer>[0]) => upsertTransfer(tlog(t, t.stage));
     put({ ...blankTransfer(transferId, title), note: 'folder ok, starting' });
@@ -289,8 +344,11 @@ export default function Home() {
     };
     startDesktopDownload(
       {
-        url: pageUrl, videoId: extra?.videoId ?? media?.videoId, kind: format, outputContainer: plan.container,
-        quality: plan.quality, codec, audioTracks, captions,
+        url: pageUrl, videoId: extra?.videoId ?? media?.videoId,
+        kind: extra?.captionsOnly ? 'captions' : format,
+        outputContainer: plan.container,
+        quality: plan.quality, codec,
+        audioTracks: extra?.audioTracks ?? audioTracks, captions,
         overwrite: extra?.overwrite ?? false, splitKinds: extra?.splitKinds ?? false,
       },
       outDir,
@@ -345,7 +403,8 @@ export default function Home() {
       splitKinds = settings.splitKinds;
       outDir = settings.outDir || await resolveOutDir();
       if (settings.splitKinds) {
-        outDir = `${outDir.replace(/[/\\]$/, '')}/${format === 'audio' ? 'Audio' : 'Video'}`;
+        const sub = format === 'audio' ? 'Audio' : format === 'captions' ? 'Captions' : 'Video';
+        outDir = `${outDir.replace(/[/\\]$/, '')}/${sub}`;
       }
       await saveSettings({ ...settings, outDir: settings.outDir || outDir });
     } catch (e) {
@@ -365,6 +424,7 @@ export default function Home() {
     setBusy(true);
     batchCancelled.current = false;
     try {
+      const multiAudio = format === 'audio' && audioTracks.length > 1;
       if (media?.isPlaylist && media.entries?.length) {
         // Desktop playlist: sequential singles into the chosen folder.
         batchCancelled.current = false;
@@ -373,10 +433,28 @@ export default function Home() {
           if (batchCancelled.current) break;
           const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
           try {
-            await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`, { videoId: e.videoId, overwrite, splitKinds });
+            if (format === 'captions') {
+              await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`, { videoId: e.videoId, overwrite, splitKinds, captionsOnly: true });
+            } else if (multiAudio) {
+              for (const lang of audioTracks) {
+                if (batchCancelled.current) break;
+                await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}-${lang}`, { videoId: e.videoId, overwrite, splitKinds, audioTracks: [lang] });
+              }
+            } else {
+              await downloadDesktopOne(pageUrl, e.title || e.videoId, outDir, `desk-${Date.now()}-${i}`, { videoId: e.videoId, overwrite, splitKinds });
+            }
           } catch (err) {
             setError(err instanceof Error ? err.message : 'Item failed');
           }
+        }
+      } else if (format === 'captions') {
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await downloadDesktopOne(url, media?.title ?? url, outDir, id, { videoId: media?.videoId, overwrite, splitKinds, captionsOnly: true });
+      } else if (multiAudio) {
+        for (const lang of audioTracks) {
+          if (batchCancelled.current) break;
+          const id = `${Date.now()}-${Math.random().toString(36).slice(2)}-${lang}`;
+          await downloadDesktopOne(url, media?.title ?? url, outDir, id, { videoId: media?.videoId, overwrite, splitKinds, audioTracks: [lang] });
         }
       } else {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -427,11 +505,6 @@ export default function Home() {
           });
         }}
       />
-      {isTauri() && queue.length > 0 && (
-        <button className="pill-btn tonal" onClick={copyDebugLog} aria-label="Copy debug log">
-          Copy debug log
-        </button>
-      )}
       <div className="field-error" role="alert">{error}</div>
       {warn && <div className="meta" role="note">{warn}</div>}
       {overwriteAsk && (

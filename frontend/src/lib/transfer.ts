@@ -83,6 +83,34 @@ export function transferUrl(p: Prepare): string {
     : `/api/stream?token=${encodeURIComponent(p.streamToken)}`;
 }
 
+/** Insert ` [tag]` before the extension: `Title [id].mp3` → `Title [id] [en].mp3`. */
+export function tagFilename(filename: string, tag: string): string {
+  const i = filename.lastIndexOf('.');
+  return i < 0 ? `${filename} [${tag}]` : `${filename.slice(0, i)} [${tag}]${filename.slice(i)}`;
+}
+
+/** Minimal client-side illegal-char strip (backend sanitizes authoritatively). */
+export function safeName(s: string): string {
+  return s.replace(/[<>:\"/\\|?*\x00-\x1f]/g, '_').trim().substring(0, 120) || 'video';
+}
+
+export function srtFilename(title: string, videoId: string | undefined, lang: string): string {
+  return `${safeName(title)} [${videoId ?? 'video'}] [${lang}].srt`;
+}
+
+export function subsUrl(pageUrl: string, lang: string): string {
+  return `/api/subs?url=${encodeURIComponent(pageUrl)}&lang=${encodeURIComponent(lang)}`;
+}
+
+/** Anchor download of an in-memory blob. */
+export function saveBlob(blob: Blob, filename: string): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+}
+
 export interface FetchOpts {
   /** Idle stall timeout before resume/abort. Defaults to 30s (tests pass ~200ms). */
   idleTimeoutMs?: number;

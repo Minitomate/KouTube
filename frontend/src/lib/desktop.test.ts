@@ -52,9 +52,33 @@ describe('desktop adapter', () => {
       codec: null,
       audioTracks: [],
       captions: ['en'],
+      captionsOnly: false,
       outDir: '/tmp/out',
       overwrite: false,
       splitKinds: false,
+    });
+  });
+
+  it('sends captions-only jobs with the srt container flag', async () => {
+    invokeMock.mockResolvedValue('job-2');
+    listenMock.mockResolvedValue(() => {});
+    await startDesktopDownload(
+      { url: 'u', videoId: 'v', kind: 'captions', outputContainer: 'srt', quality: 'best', codec: 'auto', audioTracks: [], captions: ['en', 'de'], overwrite: false, splitKinds: true },
+      '/tmp',
+      () => {},
+    );
+    expect(invokeMock).toHaveBeenCalledWith('start_download', {
+      url: 'u',
+      videoId: 'v',
+      container: 'srt',
+      quality: 'best',
+      codec: null,
+      audioTracks: [],
+      captions: ['en', 'de'],
+      captionsOnly: true,
+      outDir: '/tmp',
+      overwrite: false,
+      splitKinds: true,
     });
   });
 

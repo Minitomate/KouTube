@@ -21,9 +21,9 @@ export class KouTubePage {
     await this.inspect();
   }
 
-  async pickFormat(format: 'video' | 'audio') {
+  async pickFormat(format: 'video' | 'audio' | 'captions') {
     await this.page
-      .getByLabel(format === 'video' ? 'Video format' : 'Audio format')
+      .getByLabel(format === 'video' ? 'Video format' : format === 'audio' ? 'Audio format' : 'Captions format')
       .click();
   }
 

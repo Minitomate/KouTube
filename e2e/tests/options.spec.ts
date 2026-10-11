@@ -82,4 +82,44 @@ test.describe('container and codec options', () => {
     await app.download();
     await expect(page.getByText(/Merging to MKV/)).toBeVisible({ timeout: 15_000 });
   });
+
+  test('multi-track audio downloads one file per language', async ({ page }) => {
+    await page.route('**/api/resolve', (r) =>
+      r.fulfill({
+        json: {
+          ...manualOnly,
+          audioTracks: [
+            { lang: 'en', label: 'English (en)' },
+            { lang: 'es', label: 'Spanish (es)' },
+          ],
+        },
+      }),
+    );
+    const posted: unknown[] = [];
+    await page.route('**/api/prepare', (r) => {
+      posted.push(r.request().postDataJSON());
+      return r.fulfill({
+        json: {
+          filename: 'song.mp3', container: 'mp3', mergeRequired: false,
+          sizeEstimate: 4, streamToken: 's', muxToken: null, captions: [],
+        },
+      });
+    });
+    await page.route('**/api/stream*', (r) =>
+      r.fulfill({ status: 200, body: 'data', contentType: 'audio/mpeg' }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('audio');
+    // en is auto-selected as original; adding es makes two tracks.
+    await app.pickAudioTrack('es');
+    await app.download();
+    await expect(page.getByText('saved ✓').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('saved ✓')).toHaveCount(2);
+    const langs = (posted as Array<{ audioTrackLang?: string }>).map((p) => p.audioTrackLang).sort();
+    expect(langs).toEqual(['en', 'es']);
+    await expect(page.getByText(/\[en\]\.mp3/)).toBeVisible();
+    await expect(page.getByText(/\[es\]\.mp3/)).toBeVisible();
+  });
 });

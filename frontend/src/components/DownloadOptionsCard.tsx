@@ -13,14 +13,14 @@ export default function DownloadOptionsCard() {
     <div className="card">
       <h2>Download options</h2>
       <div className="segmented" role="group" aria-label="Format">
-        {(['video', 'audio'] as const).map((f) => (
+        {(['video', 'audio', 'captions'] as const).map((f) => (
           <button
             key={f}
             aria-pressed={format === f}
-            aria-label={f === 'video' ? 'Video format' : 'Audio format'}
+            aria-label={f === 'video' ? 'Video format' : f === 'audio' ? 'Audio format' : 'Captions format'}
             onClick={() => set({ format: f })}
           >
-            {f === 'video' ? 'Video' : 'Audio'}
+            {f === 'video' ? 'Video' : f === 'audio' ? 'Audio' : 'Captions'}
           </button>
         ))}
       </div>
@@ -70,14 +70,21 @@ export default function DownloadOptionsCard() {
           </div>
         </>
       )}
-      <MultiDropdown
-        label="Audio tracks"
-        options={tracks.map((t) => ({ id: t.id, label: t.label, badge: t.original ? 'Original' : undefined }))}
-        selected={audioTracks}
-        onToggle={toggleAudioTrack}
-        emptyText="No dubbed tracks for this video."
-        summaryNone="No audio"
-      />
+      {format === 'captions' && (
+        <p className="meta" style={{ marginTop: 12 }}>
+          Subtitle files only (.srt) — no video or audio is downloaded.
+        </p>
+      )}
+      {format !== 'captions' && (
+        <MultiDropdown
+          label="Audio tracks"
+          options={tracks.map((t) => ({ id: t.id, label: t.label, badge: t.original ? 'Original' : undefined }))}
+          selected={audioTracks}
+          onToggle={toggleAudioTrack}
+          emptyText="No dubbed tracks for this video."
+          summaryNone="No audio"
+        />
+      )}
       <MultiDropdown
         label="Captions"
         options={caps.map((c) => ({ id: c.id, label: c.label, badge: c.manual ? 'Manual-only' : undefined }))}

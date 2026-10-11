@@ -4,7 +4,7 @@ import { loadSettings, saveSettings, SEEDS, VARIANTS, type Settings } from '../l
 import { isTauri, pickFolder, getRecentLogs } from '../lib/desktop';
 
 export default function Settings() {
-  const { set } = useStore();
+  const { set, queue } = useStore();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [note, setNote] = useState('');
   const [log, setLog] = useState<string[] | null>(null);
@@ -42,12 +42,17 @@ export default function Settings() {
   async function copyLog() {
     try {
       const lines: string[] = [];
+      for (const q of queue) {
+        lines.push(`## ${q.title} [${q.status}/${q.stage}]`);
+        for (const l of q.log ?? []) lines.push(`  ${l}`);
+        if (q.error) lines.push(`  error: ${q.error}`);
+      }
       if (isTauri()) {
         try {
           const recent = await getRecentLogs();
           lines.push('## backend recent');
           for (const l of recent.slice(-60)) lines.push(`  ${l}`);
-        } catch { /* ignore */ }
+        } catch { /* frontend log alone still helps */ }
       }
       await navigator.clipboard.writeText(lines.join('\n') || '(empty log)');
       setNote('Debug log copied.');

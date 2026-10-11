@@ -80,3 +80,50 @@ test.describe('captions (manual-only dropdown)', () => {
     await expect(page.getByRole('listbox', { name: 'Captions' })).toHaveCount(0);
   });
 });
+
+test.describe('captions-only mode', () => {
+  test('blocked with no language selected', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('captions');
+    await app.download();
+    await expect(page.getByText(/caption language/i)).toBeVisible();
+  });
+
+  test('single language downloads one .srt', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const langs: string[] = [];
+    await page.route('**/api/subs*', (r) => {
+      langs.push(/lang=([a-z-]+)/.exec(r.request().url())?.[1] ?? '');
+      return r.fulfill({ status: 200, body: '1\n00:00:00,000 --> 00:00:01,000\nhi', contentType: 'text/plain' });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('captions');
+    await app.pickCaptions('en - English');
+    await app.download();
+    await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
+    expect(langs).toEqual(['en']);
+    await expect(page.getByText(/\[en\]\.srt/)).toBeVisible();
+  });
+
+  test('two languages download as zip', async ({ page }) => {
+    await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
+    const langs: string[] = [];
+    await page.route('**/api/subs*', (r) => {
+      langs.push(/lang=([a-z-]+)/.exec(r.request().url())?.[1] ?? '');
+      return r.fulfill({ status: 200, body: '1\n00:00:00,000 --> 00:00:01,000\nhi', contentType: 'text/plain' });
+    });
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl(URL);
+    await app.pickFormat('captions');
+    await app.pickCaptions('en - English', 'es - Spanish');
+    await app.download();
+    await expect(page.getByText('saved ✓').first()).toBeVisible({ timeout: 15_000 });
+    expect(langs.sort()).toEqual(['en', 'es']);
+  });
+});

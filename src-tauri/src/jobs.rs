@@ -29,6 +29,8 @@ pub struct DownloadSpec {
     pub codec: Option<String>,
     pub audio_tracks: Vec<String>,
     pub captions: Vec<String>,
+    /// Captions-only: no media, just sidecar subtitle files.
+    pub captions_only: bool,
     pub out_dir: String,
     pub title: Option<String>,
     pub overwrite: bool,
@@ -102,7 +104,7 @@ async fn finalize_file(spec: &DownloadSpec, path: Option<String>) -> Option<Stri
         Ok(()) => final_path.to_string_lossy().to_string(),
         Err(_) => path,
     };
-    if spec.split_kinds && !spec.captions.is_empty() {
+    if spec.split_kinds && !spec.captions_only && !spec.captions.is_empty() {
         let cap_dir = parent.join("Captions");
         let _ = std::fs::create_dir_all(&cap_dir);
         if let Ok(entries) = std::fs::read_dir(&parent) {
@@ -557,7 +559,13 @@ fn build_format(
     audio_langs: &[String],
 ) -> (String, bool) {
     if AUDIO_ONLY.contains(&container) {
-        return ("bestaudio/best".to_string(), false);
+        // One language per audio job (callers loop per track): pin it with
+        // a `/bestaudio` fallback so a missing dub degrades instead of failing.
+        let audio = match audio_langs.first() {
+            Some(l) => format!("(bestaudio[language^={l}]/bestaudio)"),
+            None => "bestaudio".to_string(),
+        };
+        return (format!("{audio}/best"), false);
     }
     let mut video = format!("bestvideo{}", quality_cap(quality));
     if let Some(c) = codec.as_deref().and_then(vcodec_filter) {
@@ -575,6 +583,21 @@ fn build_format(
     (format!("{}+{}/best", video, audios.join("+")), multi)
 }
 
+/// Subtitle args shared by the embed path and the captions-only path.
+fn sub_args(langs: &[String], embed: bool) -> Vec<String> {
+    let mut args = vec![
+        "--write-subs".to_string(),
+        "--sub-langs".to_string(),
+        langs.join(","),
+        "--sub-format".to_string(),
+        "srt/best".to_string(),
+    ];
+    if embed {
+        args.push("--embed-subs".to_string());
+    }
+    args
+}
+
 fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
     let (ffmpeg, _) = tools::resolve_tool(app, "ffmpeg")
         .ok_or_else(|| anyhow!("ffmpeg missing: run setup first"))?;
@@ -582,6 +605,29 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
+    if spec.captions_only {
+        // Captions-only: no media stream, just sidecar subtitle files.
+        let mut args = vec![
+            "--newline".to_string(),
+            "--no-warnings".to_string(),
+            "--no-playlist".to_string(),
+            "--socket-timeout".to_string(),
+            "15".to_string(),
+            "--retries".to_string(),
+            "2".to_string(),
+            "--ffmpeg-location".to_string(),
+            ffdir,
+            "-o".to_string(),
+            format!("{}/%(title)s [%(id)s].%(ext)s", spec.out_dir),
+            "--skip-download".to_string(),
+        ];
+        args.extend(sub_args(&spec.captions, false));
+        if spec.overwrite {
+            args.push("--force-overwrites".to_string());
+        }
+        args.push(spec.url.clone());
+        return Ok(args);
+    }
     let (format, multistreams) = build_format(
         &spec.quality,
         &spec.container,
@@ -613,19 +659,14 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
             "-x".to_string(),
             "--audio-format".to_string(),
             spec.container.clone(),
+            // Otherwise the source (usually webm) stays next to the extract.
+            "--no-keep-video".to_string(),
         ]);
     } else {
         args.extend(["--merge-output-format".to_string(), spec.container.clone()]);
     }
     if !spec.captions.is_empty() {
-        args.extend([
-            "--write-subs".to_string(),
-            "--sub-langs".to_string(),
-            spec.captions.join(","),
-            "--sub-format".to_string(),
-            "srt/best".to_string(),
-            "--embed-subs".to_string(),
-        ]);
+        args.extend(sub_args(&spec.captions, true));
     }
     if spec.overwrite {
         args.push("--force-overwrites".to_string());
@@ -1148,6 +1189,32 @@ mod tests {
         assert!(fmt.contains("[vcodec~=^(hev|hvc)]"), "{fmt}");
         let (fmt, _) = build_format(&serde_json::json!("best"), "mp4", &None, &[]);
         assert!(fmt.contains("bestvideo+bestaudio/best"), "{fmt}");
+    }
+
+    #[test]
+    fn audio_pins_single_language_with_fallback() {
+        let (fmt, multi) = build_format(
+            &serde_json::json!("best"),
+            "mp3",
+            &None,
+            &["es".to_string()],
+        );
+        assert!(fmt.contains("bestaudio[language^=es]/bestaudio"), "{fmt}");
+        assert!(!multi);
+        let (fmt, _) = build_format(&serde_json::json!("best"), "mp3", &None, &[]);
+        assert_eq!(fmt, "bestaudio/best");
+    }
+
+    #[test]
+    fn sub_args_embed_vs_sidecar() {
+        let langs = vec!["en".to_string(), "de".to_string()];
+        let embed = sub_args(&langs, true);
+        assert!(embed.contains(&"--embed-subs".to_string()));
+        assert!(embed.contains(&"en,de".to_string()));
+        let sidecar = sub_args(&langs, false);
+        assert!(!sidecar.contains(&"--embed-subs".to_string()));
+        assert!(sidecar.contains(&"--write-subs".to_string()));
+        assert!(!sidecar.contains(&"--skip-download".to_string()));
     }
 
     #[test]

@@ -5,7 +5,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import resolve, prepare, stream, mux, health
+from app.api import resolve, prepare, stream, mux, health, subs
 from app.services import tokens as _tokens  # noqa: F401 (token mint/verify side-effects)
 from app.services import limits as L
 from slowapi.errors import RateLimitExceeded
@@ -41,6 +41,7 @@ app.include_router(resolve.router, prefix="/api")
 app.include_router(prepare.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
 app.include_router(mux.router, prefix="/api")
+app.include_router(subs.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 
 
