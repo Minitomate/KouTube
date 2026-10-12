@@ -213,6 +213,26 @@ describe('desktop adapter', () => {
     expect(byteRate(samples, t0 + 10000)).toBeNull(); // stale window
   });
 
+  it('estimates ETA from percent velocity, tightening with more points', async () => {
+    const { percentETA } = await import('./desktop');
+    const t0 = 1000000;
+    // 10 %/s steady: at 50% the ETA is ~5s.
+    const samples = [
+      { t: t0, p: 20 },
+      { t: t0 + 1000, p: 30 },
+      { t: t0 + 2000, p: 40 },
+    ];
+    expect(percentETA(samples, 50, t0 + 3000)).toBeCloseTo(5, 5);
+    expect(percentETA(samples.slice(0, 2), 40, t0 + 2000)).toBeNull(); // <3 points
+    expect(percentETA(samples, 0, t0 + 3000)).toBeNull();
+    expect(percentETA(samples, 100, t0 + 3000)).toBeNull();
+    expect(percentETA(samples, 50, t0 + 2000)).toBeNull(); // span < 3s
+    expect(percentETA(
+      [{ t: t0, p: 40 }, { t: t0 + 1000, p: 30 }, { t: t0 + 2000, p: 20 }],
+      10, t0 + 3000,
+    )).toBeNull(); // backwards: current percent below the window
+  });
+
   it('resolves launch sizes from memory, monitor, and defaults', async () => {
     const { resolveWindowSize } = await import('./desktop');
     expect(resolveWindowSize({ w: 1300, h: 850 }, 1920, 1080))

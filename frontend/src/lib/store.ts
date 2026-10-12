@@ -8,6 +8,8 @@ export type TransferStage = 'preparing' | 'downloading' | 'processing' | 'zippin
 export type TransferKind = 'video' | 'audio' | 'captions';
 export interface Transfer {
   id: string; title: string; loaded: number; total: number | null;
+  /** Percent fallback (0-100) for sources without byte counts (desktop sidecar). */
+  percent?: number | null;
   status: TransferStatus; error?: string;
   stage: TransferStage; note?: string; rid?: string;
   filepath?: string;

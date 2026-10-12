@@ -117,6 +117,38 @@ export function statusLine(t: StatusView, elapsed: string | null): string {
   return withNote(`Downloading${bytes ? ` · ${bytes}` : ''}`);
 }
 
+/** Split a transfer note into speed / ETA / remainder.
+ * Matches only our own producers: client `${fmtRate} · ${fmtETA} left` and
+ * server `Staging… · rate · eta left` notes. Anything else passes as rest. */
+export function splitStats(note: string | undefined): { speed: string | null; eta: string | null; rest: string | null } {
+  if (!note) return { speed: null, eta: null, rest: null };
+  let speed: string | null = null;
+  let eta: string | null = null;
+  let text: string = note;
+  const speedM = /([\d.]+ ?(?:[KMG]?i?B)\/s)/.exec(text);
+  if (speedM) {
+    speed = speedM[1];
+    text = text.replace(speedM[0], '');
+  }
+  const etaM = /(\d+m \d+s|\d+s) left/.exec(text);
+  if (etaM) {
+    eta = `${etaM[1]} left`;
+    text = text.replace(etaM[0], '');
+  }
+  if (!eta) {
+    // Sidecar-native shape (`ETA 00:05`, `ETA 01:02:03`); `ETA Unknown`
+    // has no timestamp and stays in the remainder by design.
+    const sideM = /ETA (\d+:\d+(?::\d+)?)/.exec(text);
+    if (sideM) {
+      eta = `ETA ${sideM[1]}`;
+      text = text.replace(sideM[0], '');
+    }
+  }
+  let rest: string | null = text.split('·').map((s) => s.trim()).filter(Boolean).join(' · ') || null;
+  if (rest) rest = rest.replace(/^server:\s*/, '') || null;
+  return { speed, eta, rest };
+}
+
 /** Insert ` [tag]` before the extension: `Title [id].mp3` → `Title [id] [en].mp3`. */
 export function tagFilename(filename: string, tag: string): string {
   const i = filename.lastIndexOf('.');
@@ -217,25 +249,111 @@ export function fmtETA(s: number): string {
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
-/** Rolling-3s throughput tracker feeding onRate (client fallback numbers). */
+/** Clock-style ETA for sidecar-shaped chips: `1:05`, `1:01:05`. */
+export function fmtClock(s: number): string {
+  if (!isFinite(s) || s < 0) return '';
+  const total = Math.round(s);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return `${h > 0 ? `${h}:` : ''}${h > 0 ? String(m).padStart(2, '0') : String(m)}:${String(sec).padStart(2, '0')}`;
+}
+
+/** Throttle to at most one call per `ms` (leading immediate, trailing replays
+ * latest args). `flush()` emits pending now (completion paths stay exact). */
+export function throttleLatest<T extends unknown[]>(
+  fn: (...args: T) => void,
+  ms: number,
+): ((...args: T) => void) & { flush: () => void; cancel: () => void } {
+  let last = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending: T | null = null;
+  const fire = (...args: T) => { last = Date.now(); fn(...args); };
+  const throttled = ((...args: T) => {
+    const now = Date.now();
+    if (now - last >= ms) {
+      if (timer !== undefined) { clearTimeout(timer); timer = undefined; pending = null; }
+      fire(...args);
+      return;
+    }
+    pending = args;
+    if (timer === undefined) {
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (pending) { const p = pending; pending = null; fire(...p); }
+      }, ms - (now - last));
+    }
+  }) as ((...args: T) => void) & { flush: () => void; cancel: () => void };
+  throttled.flush = () => {
+    if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+    if (pending) { const p = pending; pending = null; fire(...p); }
+  };
+  throttled.cancel = () => {
+    if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+    pending = null;
+  };
+  return throttled;
+}
+
+/** ETA hysteresis: hold the shown value through sub-band wobble and transient
+ * unknowns so the chip counts down instead of blinking. The band is relative
+ * (min 2.5s) so precision visibly tightens as the download converges. */
+export function stableETA(prev: number | null, next: number | null): number | null {
+  if (next === null) return prev;
+  if (prev === null) return next;
+  const band = Math.max(2.5, Math.abs(prev) * 0.1);
+  return Math.abs(next - prev) < band ? prev : next;
+}
+
+/** Rolling-3s throughput tracker feeding onRate (client fallback numbers).
+ *
+ * Speed display uses the recent-window slope (responsive). ETA blends that
+ * with the whole-download average, which stabilizes as evidence grows, so
+ * precision improves over time instead of riding every throttle wave. */
 export function makeRateTracker(
   onRate: ((bytesPerSec: number, etaSec: number | null) => void) | undefined,
   getTotal: () => number | null,
 ) {
   const samples: Array<{ t: number; b: number }> = [];
-  return (loaded: number) => {
+  let origin: { t: number; b: number } | null = null;
+  let lastEta: number | null = null;
+  const emit = (loaded: number, force = false) => {
     if (!onRate) return;
     const now = performance.now();
-    samples.push({ t: now, b: loaded });
-    while (samples.length > 2 && now - samples[0].t > 3000) samples.shift();
-    if (samples.length < 2) return;
-    const dt = (now - samples[0].t) / 1000;
-    const db = loaded - samples[0].b;
-    if (dt <= 0 || db <= 0) return;
-    const bps = db / dt;
+    if (!force) {
+      samples.push({ t: now, b: loaded });
+      origin ??= { t: now, b: loaded };
+    }
+    while (samples.length > 0 && now - samples[0].t > 3000) samples.shift();
     const total = getTotal();
-    onRate(bps, total !== null ? Math.max(0, (total - loaded) / bps) : null);
+    if (samples.length < 2) {
+      // Stalled with something in flight: report 0 pace, hold last ETA.
+      if (force && samples.length === 1 && now - samples[0].t > 1500 && loaded > 0) {
+        onRate(0, stableETA(lastEta, null));
+      }
+      return;
+    }
+    // Hold until the window spans ~1s: early micro-bursts must never set a
+    // flickering ETA; bytes still tick via onProgress meanwhile.
+    const span = (now - samples[0].t) / 1000;
+    if (span < 1.0) return;
+    const db = loaded - samples[0].b;
+    if (db <= 0) {
+      lastEta = stableETA(lastEta, null);
+      onRate(0, lastEta);
+      return;
+    }
+    const recent = db / span;
+    let pace = recent;
+    if (origin && now - origin.t >= 2000) {
+      const overall = (loaded - origin.b) / ((now - origin.t) / 1000);
+      if (overall > 0) pace = 0.5 * recent + 0.5 * overall;
+    }
+    const eta = total !== null && pace > 0 ? Math.max(0, (total - loaded) / pace) : null;
+    lastEta = stableETA(lastEta, eta);
+    onRate(recent, lastEta);
   };
+  return emit;
 }
 
 export async function downloadToDisk(
@@ -249,6 +367,11 @@ export async function downloadToDisk(
   const idleMs = opts?.idleTimeoutMs ?? 30_000;
   const maxResumes = opts?.maxResumes ?? 3;
   const onStage = opts?.onStage;
+  // Cap UI churn at 4Hz: per-chunk callbacks coalesce (leading immediate,
+  // trailing latest). Completion paths cancel + report directly (exact).
+  const progressTo = throttleLatest((ld: number, tt: number | null) => onProgress(ld, tt), 250);
+  const rateCb = opts?.onRate;
+  const rateTo = rateCb ? throttleLatest((bps: number, eta: number | null) => rateCb(bps, eta), 250) : undefined;
   const reqHeaders: Record<string, string> = {};
   if (opts?.requestId) reqHeaders['X-Request-ID'] = opts.requestId;
   const anyWin = window as unknown as {
@@ -310,14 +433,22 @@ export async function downloadToDisk(
           rate?: number | null; eta?: number | null;
         };
         if (!p || !p.phase || p.phase === 'ready' || p.phase === 'error' || p.phase === 'pending') return;
-        const what = p.phase.startsWith('staging-') ? p.phase.slice(8) : p.phase;
         const have = p.loaded ?? 0;
         const of = p.total ? ` / ${fmtBytes(p.total)}` : '';
         const rate = p.rate ? ` · ${fmtRate(p.rate)}` : '';
         const eta = p.eta != null ? ` · ${fmtETA(p.eta)} left` : '';
-        const note = p.phase === 'muxing'
-          ? 'Merging on server…'
-          : `Staging ${what} · ${fmtBytes(have)}${of}${rate}${eta}`;
+        let note: string;
+        if (p.phase === 'muxing') {
+          const bytes = have > 0 ? ` · ${fmtBytes(have)}${of}` : '';
+          note = `Merging on server…${bytes}`;
+        } else if (p.phase === 'subtitles') {
+          note = `Fetching subtitles · ${fmtBytes(have)}${of}${rate}${eta}`;
+        } else if (p.phase === 'starting') {
+          note = 'Starting server merge…';
+        } else {
+          const what = p.phase.startsWith('staging-') ? p.phase.slice(8) : p.phase;
+          note = `Staging ${what} · ${fmtBytes(have)}${of}${rate}${eta}`;
+        }
         onStage?.('downloading', `server: ${note}`);
         opts.onServerProgress?.(have, p.total ?? null, note);
       } catch { /* poller is best-effort only */ }
@@ -433,16 +564,22 @@ export async function downloadToDisk(
     const parts = planParts(total);
     const per = new Array<number>(parts.length).fill(0);
     let first = true;
-    const track = makeRateTracker(opts?.onRate, () => total);
+    const track = makeRateTracker(rateTo, () => total);
     const report = () => {
       const sum = per.reduce((a, b) => a + b, 0);
-      onProgress(sum, total);
+      progressTo(sum, total);
       track(sum);
       if (first) { first = false; onStage?.('downloading'); }
       // Processing only when post-fetch work (merge/extract) will actually run.
       if (sum >= total && opts?.willProcess) onStage?.('processing', `${fmtBytes(sum)} received`);
     };
+    // 1s liveness: re-emit pace even with no new bytes (stall shows, bar stays alive).
+    const alive = setInterval(() => {
+      const sum = per.reduce((a, b) => a + b, 0);
+      track(sum, true);
+    }, 1000);
     const limit = pLimit(PART_CONCURRENCY);
+    try {
     await Promise.all(parts.map((pt, i) => limit(async () => {
       const before = per[i];
       await fetchPart(base, pt.start, pt.end, i, writer, (n) => {
@@ -453,13 +590,26 @@ export async function downloadToDisk(
         throw e;
       });
     })));
+    } finally {
+      clearInterval(alive);
+      progressTo.cancel();
+      rateTo?.cancel();
+    }
     const sum = per.reduce((a, b) => a + b, 0);
     if (sum !== total) throw new Error(`Incomplete download (${sum}/${total} bytes)`);
+    progressTo.cancel();
+    rateTo?.cancel();
     onProgress(sum, total);
   };
 
   const fetchSequential = async (base: string): Promise<void> => {
-    const track = makeRateTracker(opts?.onRate, () => total);
+    const track = makeRateTracker(rateTo, () => total);
+    // 1s liveness: re-emit pace even with no new bytes (stall shows 0, bar stays alive).
+    const alive = setInterval(() => {
+      progressTo(loaded, total);
+      track(loaded, true);
+    }, 1000);
+    try {
     for (;;) {
       signal?.throwIfAborted();
       const fetchHeaders = { ...reqHeaders, Range: `bytes=${loaded}-` };
@@ -486,7 +636,7 @@ export async function downloadToDisk(
           stopPoll();
           await write(read.value);
           loaded += read.value.byteLength;
-          onProgress(loaded, total);
+          progressTo(loaded, total);
           track(loaded);
           if (firstByte) { firstByte = false; onStage?.('downloading'); }
           if (total !== null && loaded >= total && opts?.willProcess) {
@@ -502,6 +652,11 @@ export async function downloadToDisk(
         throw new Error(`Incomplete download (${loaded}/${total} bytes)`);
       }
       break;
+    }
+    } finally {
+      clearInterval(alive);
+      progressTo.cancel();
+      rateTo?.cancel();
     }
   };
 
@@ -526,6 +681,8 @@ export async function downloadToDisk(
     }
   } finally {
     stopPoll();
+    progressTo.cancel();
+    rateTo?.cancel();
   }
   if (writable) {
     await writable.close();
@@ -556,6 +713,11 @@ export async function downloadZip(
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   const errors: string[] = [];
+  // Item/progress callbacks fire per chunk: coalesce to 4Hz like downloads.
+  const itemTo = throttleLatest(
+    (i: number, loaded: number, total: number | null) => onItem(i, loaded, total), 250);
+  const zipTo = throttleLatest((p: number) => onZip(p), 250);
+  try {
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     try {
@@ -576,21 +738,29 @@ export async function downloadZip(
         if (done) break;
         chunks.push(value);
         loaded += value.byteLength;
-        onItem(i, loaded, total);
+        itemTo(i, loaded, total);
       }
       try { await reader.cancel(); } catch { /* closed */ }
       reader.releaseLock();
       if (total !== null && loaded < total) {
         throw new Error(`incomplete (${loaded}/${total} bytes)`);
       }
+      itemTo.flush();
+      onItem(i, loaded, total);
       zip.file(it.filename, new Blob(chunks as BlobPart[]));
     } catch (e) {
       errors.push(`${it.filename}: ${e instanceof Error ? e.message : 'failed'}`);
+      itemTo.flush();
       onItem(i, 0, it.sizeEstimate);
     }
   }
+  } finally {
+    itemTo.flush();
+    zipTo.flush();
+  }
   if (errors.length) zip.file('_errors.txt', errors.join('\n'));
-  const blob = await zip.generateAsync({ type: 'blob' }, (m) => onZip(m.percent));
+  const blob = await zip.generateAsync({ type: 'blob' }, (m) => zipTo(m.percent));
+  zipTo.flush();
   const anyWin = window as unknown as {
     showSaveFilePicker?: (o: unknown) => Promise<{
       createWritable: () => Promise<FileSystemWritableFileStream>;

@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import pLimit from 'p-limit';
 import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, type Transfer, type AudioQuality } from '../lib/store';
 import { api } from '../lib/api';
-import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
+import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, fmtClock, makeRateTracker, splitStats, throttleLatest, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
 import { captionLabel } from '../lib/lang';
-import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, existingOutputs } from '../lib/desktop';
+import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
 import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
 import Confirm from '../components/Confirm';
 import UrlBar from '../components/UrlBar';
@@ -25,6 +25,7 @@ export default function Home() {
   const abortRefs = useRef(new Set<AbortController>());
   const desktopJobs = useRef(new Map<string, string>());
   const rateSamples = useRef(new Map<string, Array<{ t: number; p: number }>>());
+  const pctSamples = useRef(new Map<string, Array<{ t: number; p: number }>>());
   const batchCancelled = useRef(false);
   const [canCancel, setCanCancel] = useState(false);
   const [overwriteAsk, setOverwriteAsk] = useState<{ files: string[]; outDir: string; splitKinds: boolean } | null>(null);
@@ -180,7 +181,10 @@ export default function Home() {
     const kind = format as 'video' | 'audio';
     const stage = (st: 'downloading' | 'processing', note?: string) => {
       const cur = useStore.getState().queue.find((q) => q.id === id);
-      if (cur && cur.status === 'working') upsertTransfer({ ...cur, stage: st, note });
+      if (cur && cur.status === 'working') upsertTransfer({
+        ...cur, stage: st, note,
+        mergeAt: st === 'processing' ? (cur.mergeAt ?? Date.now()) : cur.mergeAt,
+      });
     };
     const ctl = new AbortController();
     abortRefs.current.add(ctl);
@@ -210,9 +214,17 @@ export default function Home() {
           },
           onServerProgress: (sLoaded, sTotal, note) => {
             const cur = useStore.getState().queue.find((q) => q.id === id);
-            // Only drive the bar pre-first-byte; real bytes take over after.
-            if (cur && cur.status === 'working' && cur.loaded === 0) {
-              upsertTransfer({ ...cur, loaded: sLoaded, total: sTotal, note });
+            // Pre-first-byte only, monotonic: staging totals are per-input
+            // estimates, so never move the bar backwards or shrink the total.
+            if (cur && cur.status === 'working' && cur.stage !== 'processing') {
+              const loaded = Math.max(cur.loaded, sLoaded);
+              // Never shrink a known total: staging entries are per-input.
+              const total = cur.total !== null && sTotal != null
+                ? Math.max(cur.total, sTotal)
+                : (cur.total ?? sTotal);
+              if (loaded !== cur.loaded || total !== cur.total || cur.note !== note) {
+                upsertTransfer({ ...cur, loaded, total, note });
+              }
             }
           } });
       upsertTransfer({ id, title: filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done', stage: 'end', rid });
@@ -298,7 +310,13 @@ export default function Home() {
               const it = zipItems[i];
               upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'downloading' });
             },
-            () => {},
+            (percent) => {
+              const note = `Zipping ${Math.round(percent)}%`;
+              for (const it of zipItems) {
+                const cur = useStore.getState().queue.find((q) => q.id === it.id);
+                if (cur?.status === 'working') upsertTransfer({ ...cur, note });
+              }
+            },
             zipCtl.signal,
           );
         } finally {
@@ -362,15 +380,49 @@ export default function Home() {
       const id = `${Date.now()}-sub`;
       const lang = it.detail;
       upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'downloading', kind: 'captions', detail: lang });
+      const subCtl = new AbortController();
+      abortRefs.current.add(subCtl);
+      // Stream the body so bytes/speed show every second instead of a frozen bar.
+      // Progress coalesced to 4Hz like downloads; flushed on completion.
+      const prog = throttleLatest((ld: number, tt: number | null) =>
+        upsertTransfer({ id, title: it.filename, loaded: ld, total: tt, status: 'working', stage: 'downloading', kind: 'captions', detail: lang }), 250);
+      const noteTo = throttleLatest((n: string) => {
+        const cur = useStore.getState().queue.find((q) => q.id === id);
+        if (cur && cur.status === 'working' && cur.note !== n) upsertTransfer({ ...cur, note: n });
+      }, 250);
       try {
-        const res = await fetch(it.url);
+        const res = await fetch(it.url, { signal: subCtl.signal });
         if (!res.ok) throw new Error(`Subtitles failed (HTTP ${res.status})`);
-        saveBlob(await res.blob(), it.filename);
-        upsertTransfer({ id, title: it.filename, loaded: 1, total: 1, status: 'done', stage: 'end', kind: 'captions', detail: lang });
+        if (!res.body) throw new Error('Subtitles failed (empty body)');
+        const total = Number(res.headers.get('content-length')) || null;
+        const reader = res.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let loaded = 0;
+        const track = makeRateTracker((bps, eta) => {
+          noteTo(`${fmtRate(bps)}${eta != null ? ` · ${fmtETA(eta)} left` : ''}`);
+        }, () => total);
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.byteLength;
+          track(loaded);
+          prog(loaded, total);
+        }
+        try { await reader.cancel(); } catch { /* closed */ }
+        reader.releaseLock();
+        saveBlob(new Blob(chunks as BlobPart[]), it.filename);
+        prog.cancel();
+        noteTo.cancel();
+        upsertTransfer({ id, title: it.filename, loaded: total ?? loaded, total: total ?? loaded, status: 'done', stage: 'end', kind: 'captions', detail: lang });
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Download failed';
+        prog.cancel();
+        noteTo.cancel();
         upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'error', error: message, stage: 'end', kind: 'captions', detail: lang });
         throw new Error(message);
+      } finally {
+        abortRefs.current.delete(subCtl);
       }
       return;
     }
@@ -387,7 +439,13 @@ export default function Home() {
           const it = zipItems[i];
           upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'downloading' });
         },
-        () => {},
+        (percent) => {
+          const note = `Zipping ${Math.round(percent)}%`;
+          for (const it of zipItems) {
+            const cur = useStore.getState().queue.find((q) => q.id === it.id);
+            if (cur?.status === 'working') upsertTransfer({ ...cur, note });
+          }
+        },
         zipCtl.signal,
       );
     } finally {
@@ -431,15 +489,70 @@ export default function Home() {
     let stopFn = () => {};
     const resolveRef: { current: null | (() => void) } = { current: null };
     const done = new Promise<void>((resolve) => { resolveRef.current = resolve; });
+    // Sidecar emits per output line: coalesce progress to 4Hz (terminal
+    // events stay immediate). Cancel on finish so a stale trailing update
+    // can never resurrect a terminal card.
+    const applyProgress = throttleLatest((m: MappedEvent, e: DesktopEvent) => {
+      const cur = useStore.getState().queue.find((q) => q.id === transferId);
+      const samples = rateSamples.current.get(transferId) ?? [];
+      // Percent-scale samples would poison byte rates: track bytes only.
+      if (m.loaded != null) {
+        samples.push({ t: Date.now(), p: m.loaded });
+        rateSamples.current.set(transferId, samples.slice(-20));
+      }
+      // Percent velocity for percent-only events (no byte ETA can exist).
+      if (m.loaded == null && m.percent != null) {
+        const ps = pctSamples.current.get(transferId) ?? [];
+        ps.push({ t: Date.now(), p: m.percent });
+        pctSamples.current.set(transferId, ps.slice(-60));
+      }
+      // Client rate only from real bytes; percent would mislabel the units.
+      const rate = m.total != null ? byteRate(samples, Date.now()) : null;
+      let note = m.note ?? (rate !== null ? fmtRate(rate) : cur?.note);
+      // Fill a missing ETA from percent velocity (sidecar ETAs always win).
+      if (!splitStats(note).eta && m.total == null) {
+        const pe = percentETA(
+          pctSamples.current.get(transferId) ?? [],
+          m.percent ?? cur?.percent ?? 0,
+        );
+        if (pe !== null) note = note ? `${note} · ETA ${fmtClock(pe)}` : `ETA ${fmtClock(pe)}`;
+      }
+      const base = {
+        id: transferId, title: e.title ?? title,
+        loaded: m.loaded ?? cur?.loaded ?? 0, total: m.total ?? cur?.total ?? null,
+        percent: m.loaded != null ? cur?.percent ?? null : (m.percent ?? cur?.percent ?? null),
+        status: 'working' as const, stage: m.stage,
+        note,
+        mergeAt: m.stage === 'processing' ? (cur?.mergeAt ?? Date.now()) : cur?.mergeAt,
+      };
+      upsertTransfer(cur ? { ...cur, ...base } : { ...blankTransfer(transferId, title), ...base });
+    }, 250);
     const finish = (t: Transfer, line: string) => {
+      applyProgress.cancel();
       const cur = useStore.getState().queue.find((q) => q.id === transferId);
       upsertTransfer(tlog({ ...(cur ?? blankTransfer(transferId, title)), ...t }, line));
       desktopJobs.current.delete(transferId);
+      rateSamples.current.delete(transferId);
+      pctSamples.current.delete(transferId);
+      clearInterval(alive);
       if (!desktopJobs.current.size) setCanCancel(false);
       // Pooled jobs: only the last one out clears the CTA.
       if (!useStore.getState().queue.some((q) => q.status === 'working')) setBusy(false);
       stopFn(); resolveRef.current?.();
     };
+    // 1s liveness: refresh a speed-only note so pace ticks every second.
+    // Never clobber an ETA-bearing note (event ETAs win) and never upsert
+    // identical state: both caused the ETA/speed flicker.
+    const alive = setInterval(() => {
+      const cur = useStore.getState().queue.find((q) => q.id === transferId);
+      if (!cur || cur.status !== 'working') return;
+      if (splitStats(cur.note).eta) return;
+      const samples = rateSamples.current.get(transferId) ?? [];
+      const rate = byteRate(samples.filter((s) => Date.now() - s.t <= 8000), Date.now());
+      if (rate === null) return;
+      const next = fmtRate(rate);
+      if (cur.note !== next) upsertTransfer({ ...cur, note: next });
+    }, 1000);
     startDesktopDownload(
       {
         url: pageUrl, videoId: extra?.videoId ?? media?.videoId,
@@ -463,23 +576,7 @@ export default function Home() {
         } else if (m.kind === 'cancelled') {
           finish({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' }, 'event: cancelled');
         } else {
-          const cur = useStore.getState().queue.find((q) => q.id === transferId);
-          const samples = rateSamples.current.get(transferId) ?? [];
-          // Percent-scale samples would poison byte rates: track bytes only.
-          if (m.loaded != null) {
-            samples.push({ t: Date.now(), p: m.loaded });
-            rateSamples.current.set(transferId, samples.slice(-20));
-          }
-          // Client rate only from real bytes; percent would mislabel the units.
-          const rate = m.total != null ? byteRate(samples, Date.now()) : null;
-          const base = {
-            id: transferId, title: e.title ?? title,
-            loaded: m.loaded ?? cur?.loaded ?? 0, total: m.total ?? cur?.total ?? null,
-            status: 'working' as const, stage: m.stage,
-            note: m.note ?? (rate !== null ? fmtRate(rate) : undefined),
-            mergeAt: m.stage === 'processing' ? (cur?.mergeAt ?? Date.now()) : cur?.mergeAt,
-          };
-          upsertTransfer(cur ? { ...cur, ...base } : { ...blankTransfer(transferId, title), ...base });
+          applyProgress(m, e);
         }
       },
     ).then(({ jobId, stop }) => {

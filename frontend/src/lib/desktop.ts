@@ -69,6 +69,28 @@ export interface MappedEvent {
   note?: string;
 }
 
+/** Client ETA (seconds) from percent velocity for percent-only progress
+ * without byte counts. Velocity over the sample window, so the estimate
+ * tightens as points accumulate; needs span so early points can't invent
+ * precision. Null when unknowable (bounds, too few points, stalled). */
+export function percentETA(
+  samples: Array<{ t: number; p: number }>,
+  percent: number,
+  now: number = Date.now(),
+  windowMs = 60000,
+  minSpanMs = 3000,
+): number | null {
+  if (percent <= 0 || percent >= 100) return null;
+  const fresh = samples.filter((s) => now - s.t <= windowMs);
+  if (fresh.length < 3) return null;
+  if (now - fresh[0].t < minSpanMs) return null;
+  const dv = percent - fresh[0].p;
+  if (dv <= 0) return null;
+  const v = dv / ((now - fresh[0].t) / 1000);
+  if (v <= 0) return null;
+  return Math.max(0, (100 - percent) / v);
+}
+
 /** Client-side rate over a rolling window (fallback when server omits speed). */
 export function byteRate(
   samples: Array<{ t: number; p: number }>,

@@ -67,7 +67,9 @@ async def stream(token: str, request: Request):
             await client.aclose()
 
     out_headers = {"Accept-Ranges": "bytes",
-                   "Content-Disposition": f'attachment; filename="{data.get("n", "video")}"'}
+                   "Content-Disposition": f'attachment; filename="{data.get("n", "video")}"',
+                   "X-Accel-Buffering": "no",
+                   "Cache-Control": "no-store"}
     for h in ("content-length", "content-range", "content-type"):
         if r.headers.get(h):
             out_headers[h] = r.headers[h]

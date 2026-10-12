@@ -25,4 +25,7 @@ export const PATHS = {
   trash: 'M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m3 0l-1 13a1 1 0 01-1 1H8a1 1 0 01-1-1L6 7',
   clear: 'M6 6l12 12M18 6L6 18',
   alert: 'M12 3L2 21h20zM12 10v5m0 3v.5',
+  download: 'M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14',
+  speed: 'M5 19a9 9 0 0114 0M12 15l3.5-5.5M12 15h.5',
+  eta: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3.5 2',
 };

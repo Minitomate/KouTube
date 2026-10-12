@@ -249,7 +249,7 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 }
 .queue-grid .queue-cards { display: grid; gap: 4px; }
 @media (min-width: 860px) {
-  .queue-cards { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .queue-cards { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
   .queue-cards .job { border: 1px solid var(--outline-variant); border-radius: 16px; padding: 12px; }
 }
 
@@ -301,6 +301,13 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 .job-meta-row { justify-content: flex-start; }
 .job-meta-row .job-status { flex: 1; }
 .job-meta-row .pill-btn.text { margin-left: auto; }
+
+/* Transfer stats: icon + value chips on one stable row. Tabular numerals
+   stop per-second width jitter; reserved min-height stops the progress bar
+   from shifting when stats appear or hide. */
+.job-stats { gap: 14px; margin-bottom: 8px; min-height: 22px; align-items: center; }
+.job-stats .stat { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--on-surface-variant); font-size: 13px; }
+.job-stats .stat svg { flex: none; }
 
 /* Disabled mode / dropdown (no manual captions). */
 .segmented button:disabled { opacity: 0.45; cursor: not-allowed; }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
-import { kindBadge, statusLine } from '../lib/transfer';
+import { fmtBytes, kindBadge, splitStats, statusLine } from '../lib/transfer';
 import { isTauri, playFile, revealFile, trashDownload } from '../lib/desktop';
 import Confirm from './Confirm';
 import { Icon, PATHS } from './icons';
@@ -26,12 +26,31 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   const badge = kindBadge(item.kind, item.detail);
   // Totals can be estimates (mux): never render over 100%. Once every
   // expected byte arrived but the stream continues, say so honestly.
-  const raw = item.total ? Math.round((item.loaded / item.total) * 100) : null;
-  const pct = raw === null ? null : Math.min(100, raw);
-  // Unknown total: busy stripe, never a fake-full bar.
+  // Percent-only sources (desktop sidecar classic lines): fall back to percent.
+  const raw = item.total ? Math.round((item.loaded / item.total) * 100)
+    : (item.percent ?? null);
+  const pct = raw === null ? null : Math.min(100, Math.max(0, Math.round(raw)));
+  // Unknown total and no percent: busy stripe, never a fake-full bar.
   const indeterminate = item.status === 'working' && pct === null;
   const elapsed = item.mergeAt ? fmtElapsed(Date.now() - item.mergeAt) : null;
-  const statusText = statusLine(item, elapsed);
+  const baseText = statusLine(item, elapsed);
+  const statusText = (pct !== null && item.total == null && item.status === 'working' && item.stage !== 'preparing')
+    ? `${baseText} · ${pct}%`
+    : baseText;
+  // Structured stats row (icons): bytes + speed + ETA as nowrap chips so the
+  // per-second numbers never re-wrap the line. The status line then carries
+  // only the stage plus any remainder note (no duplicated numbers).
+  const stats = splitStats(item.note);
+  const bytesText = item.total != null
+    ? `${fmtBytes(item.loaded)}/${fmtBytes(item.total)}`
+    : item.loaded > 0 ? fmtBytes(item.loaded) : null;
+  const showStats = item.status === 'working';
+  const stageWord = item.stage === 'preparing' ? 'Preparing…'
+    : item.stage === 'processing' ? `Processing…${elapsed ? ` · ${elapsed}` : ''}`
+    : 'Downloading';
+  const statusMeta = item.status === 'working'
+    ? [stageWord, pct !== null && bytesText === null ? `${pct}%` : null, stats.rest].filter(Boolean).join(' · ')
+    : statusText;
   async function play() {
     if (!item?.filepath) return;
     try {
@@ -70,11 +89,27 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       </div>
       <div className="row job-meta-row">
         {badge && <span className="chip tonal" aria-label={`Download type ${badge}`}>{badge}</span>}
-        <span className="meta job-status">{statusText}</span>
+        <span className="meta job-status">{statusMeta}</span>
         <button className="pill-btn text" style={{ minHeight: 32 }} aria-label={`Remove ${item.title}`} onClick={() => onRemove(transferId)}>
           ✕
         </button>
       </div>
+      {showStats && (
+        <div className="row job-stats">
+          <span className="stat">
+            <Icon d={PATHS.download} size={16} />
+            <span>{bytesText ?? '–'}</span>
+          </span>
+          <span className="stat">
+            <Icon d={PATHS.speed} size={16} />
+            <span>{stats.speed ?? '–'}</span>
+          </span>
+          <span className="stat">
+            <Icon d={PATHS.eta} size={16} />
+            <span>{stats.eta ?? '–'}</span>
+          </span>
+        </div>
+      )}
       <div
         className={`progress-pill${indeterminate ? ' indeterminate' : ''}`}
         role="progressbar"

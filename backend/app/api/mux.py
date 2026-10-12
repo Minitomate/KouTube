@@ -319,10 +319,14 @@ async def mux(token: str, request: Request):
     tmp = tempfile.mkdtemp(prefix="koutube-mux-")
     log.info("mux start", rid=rid, container=container,
              subs=data.get("s") or [])
+    _progress(rid, phase="starting", loaded=0, total=None)
     try:
         sub_files: list[str] = []
         auto_langs = set(data.get("sa") or [])
-        for lang in (data.get("s") or []):
+        sub_langs = list(data.get("s") or [])
+        for i, lang in enumerate(sub_langs):
+            _progress(rid, phase="subtitles", loaded=i, total=len(sub_langs),
+                       note=lang)
             texts = await asyncio.to_thread(Y.fetch_sub_texts, data["u"], [lang],
                                             data.get("f", "srt"), lang in auto_langs)
             text = texts.get(lang)
@@ -372,7 +376,11 @@ async def mux(token: str, request: Request):
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE)
-        _progress(rid, phase="muxing")
+        # Carry staging numbers into the merge so the 1s poll keeps
+        # reporting bytes/speed instead of going silent mid-merge.
+        prev = _MUX_PROGRESS.get(rid) or {}
+        _progress(rid, phase="muxing", loaded=prev.get("loaded", 0),
+                  total=prev.get("total"), rate=None, eta=None)
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
             log.error("ffmpeg mux failed", rid=rid, returncode=proc.returncode,
@@ -402,6 +410,8 @@ async def mux(token: str, request: Request):
             "Content-Disposition": f'attachment; filename="{data.get("n", "video")}"',
             "Content-Length": str(size),
             "Accept-Ranges": "none",
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-store",
         })
     except HTTPException:
         _cleanup_tmp(tmp)

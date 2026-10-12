@@ -18,8 +18,9 @@ use tokio::sync::Mutex;
 use crate::tools;
 
 /// Watchdog budgets. Download phase needs both pipes quiet: stdout carries
-/// progress, stderr carries retry chatter, and a recovering download must
-/// survive. Merge phase: ffmpeg speaks only on stderr.
+/// progress and status, stderr carries ffmpeg chatter inherited during
+/// merges, and a recovering download must survive. Merge phase: the merge
+/// itself speaks only on stderr.
 const STDOUT_QUIET_KILL: Duration = Duration::from_secs(60);
 const STDERR_QUIET_KILL: Duration = Duration::from_secs(30);
 const MERGE_QUIET_KILL: Duration = Duration::from_secs(120);
@@ -794,7 +795,7 @@ fn audio_quality_flag(
     }
 }
 
-fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
+fn build_args(app: &AppHandle, spec: &DownloadSpec, print_file: &str) -> Result<Vec<String>> {
     let (ffmpeg, _) = tools::resolve_tool(app, "ffmpeg")
         .ok_or_else(|| anyhow!("ffmpeg missing: run setup first"))?;
     let ffdir = ffmpeg
@@ -858,9 +859,13 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
             &spec.container,
             spec.audio_tracks.first().map(|s| s.as_str()),
         ),
-        "--print".to_string(),
+        "--print-to-file".to_string(),
         "after_move:filepath".to_string(),
+        print_file.to_string(),
     ];
+    // NOTE: plain `--print` implies quiet in yt-dlp and would silence ALL
+    // status output (verified: zero lines on both pipes). `--print-to-file`
+    // keeps full stdout progress while the path lands in the file.
     if multistreams {
         args.push("--audio-multistreams".to_string());
     }
@@ -895,9 +900,39 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
     Ok(args)
 }
 
+/// True for our `--print-to-file` dotfiles: `.koutube-path-<jobid>.txt`.
+fn is_print_file(name: &str) -> bool {
+    name.starts_with(".koutube-path-") && name.ends_with(".txt")
+}
+
+/// Sweep stale print dotfiles left by killed jobs. Best-effort: entries for
+/// still-live jobs are kept so concurrent batch downloads never eat each
+/// other's just-written path file.
+async fn sweep_print_files(out_dir: &str) {
+    let live: std::collections::HashSet<String> = jobs()
+        .lock()
+        .await
+        .keys()
+        .map(|id| format!(".koutube-path-{id}.txt"))
+        .collect();
+    let mut dead = vec![];
+    if let Ok(entries) = std::fs::read_dir(out_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if is_print_file(&name) && !live.contains(&name) {
+                dead.push(entry.path());
+            }
+        }
+    }
+    for p in dead {
+        let _ = std::fs::remove_file(&p);
+    }
+}
+
 pub async fn start_download(app: &AppHandle, spec: DownloadSpec) -> Result<String> {
     validate_url(&spec.url)?;
     std::fs::create_dir_all(&spec.out_dir).map_err(|e| anyhow!("bad folder: {e}"))?;
+    sweep_print_files(&spec.out_dir).await;
     remember_dir(&spec.out_dir).await;
     let job_id = format!("{:x}", randish());
     blog(format!(
@@ -1100,7 +1135,13 @@ async fn run_once(
 ) -> Result<Option<String>> {
     let (ytdlp, _) = tools::resolve_tool(app, "yt-dlp")
         .ok_or_else(|| anyhow!("yt-dlp missing: run setup first"))?;
-    let args = build_args(app, spec)?;
+    // `--print-to-file` target: per-job dotfile next to the outputs, read
+    // and removed after the child exits (after_move only fires on success).
+    let print_file = std::path::Path::new(&spec.out_dir)
+        .join(format!(".koutube-path-{job_id}.txt"))
+        .to_string_lossy()
+        .to_string();
+    let args = build_args(app, spec, &print_file)?;
     set_status(
         app,
         job_id,
@@ -1152,9 +1193,16 @@ async fn run_once(
 
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;
-    // ffmpeg progress arrives on STDERR: drain it (never block the pipe),
-    // timestamp it for the merge watchdog, and keep a tail so failures
-    // quote yt-dlp's own diagnostics instead of dying silent.
+    // Pipe contract (verified against yt-dlp 2026.08.19): ALL status output
+    // (info, progress, [Merger], ERROR) goes to stdout; stderr carries only
+    // ffmpeg chatter inherited during merges. `--print-to-file` (not
+    // `--print`, which implies quiet) keeps stdout verbose while the final
+    // path lands in the print file. So the main loop below consumes stdout;
+    // this task drains stderr for watchdog liveness plus failure tail.
+    // Any child output is liveness: both pipes refresh the timers, so a
+    // download riding out retries is never killed mid-recovery.
+    let last_io = Arc::new(Mutex::new(Instant::now()));
+    let last_out = Arc::new(Mutex::new(Instant::now()));
     let err_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let tail_text = || {
         let err_tail = err_tail.clone();
@@ -1173,23 +1221,28 @@ async fn run_once(
             s
         }
     };
-    // ffmpeg progress arrives on STDERR: drain it (never block the pipe),
-    // timestamp it for the merge watchdog, and keep a tail so failures quote
-    // yt-dlp's own diagnostics instead of dying silent.
-    // Any child output is liveness: stderr also refreshes the download-phase
-    // timer, so a download riding out retries is never killed mid-recovery.
-    let last_io = Arc::new(Mutex::new(Instant::now()));
-    let last_out = Arc::new(Mutex::new(Instant::now()));
+    // Stderr sample + counter mirror the stdout sampler so a silent card
+    // resolves to a pipe decision instead of another blind round.
+    let n_err: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
     {
         let last_io = last_io.clone();
         let last_out = last_out.clone();
         let err_tail = err_tail.clone();
+        let n_err = n_err.clone();
+        let job_id_task = job_id.to_string();
         tauri::async_runtime::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
+            let mut shown = 0u8;
             while let Some(l) = lines.next_line().await.unwrap_or(None) {
                 let now = Instant::now();
                 *last_io.lock().await = now;
                 *last_out.lock().await = now;
+                *n_err.lock().await += 1;
+                if shown < 3 {
+                    shown += 1;
+                    let sample: String = l.chars().take(300).collect();
+                    blog(format!("raw stderr job={job_id_task} line={sample}"));
+                }
                 let mut guard = err_tail.lock().await;
                 guard.push(l);
                 if guard.len() > 20 {
@@ -1201,9 +1254,12 @@ async fn run_once(
     }
 
     let mut reader = BufReader::new(stdout).lines();
-    let mut final_path: Option<String> = None;
     let mut merging = false;
     let mut logged_unparsed = false;
+    // Raw stdout sample: first 3 lines per job, so a silent card can be
+    // traced to pipe content (template mismatch, \r-bundling, empty pipe).
+    let mut raw_logged = 0u8;
+    let mut n_out: u64 = 0;
     loop {
         let line = tokio::time::timeout(Duration::from_secs(1), reader.next_line()).await;
         match line {
@@ -1247,9 +1303,26 @@ async fn run_once(
                 // Merging has no stdout cadence: heartbeat via ffmpeg stderr is
                 // drained above; extend patience while the child lives.
                 if merging {
+                    // Heartbeat: re-emit last view so the UI ticks every
+                    // second through silent merges (1s cadence contract).
+                    let view = jobs().lock().await.get(job_id).map(|h| h.view.clone());
+                    if let Some(v) = view {
+                        emit_progress(app, job_id, &v);
+                    }
                     match child.try_wait()? {
                         Some(_) => break,
                         None => continue,
+                    }
+                }
+                // Downloading but yt-dlp is quiet (small files buffer one
+                // line, captions-only emits nothing): heartbeat the last view
+                // so the card never looks frozen mid-download.
+                if !merging {
+                    let view = jobs().lock().await.get(job_id).map(|h| h.view.clone());
+                    if let Some(v) = view {
+                        if v.status == "downloading" || v.status == "retrying" {
+                            emit_progress(app, job_id, &v);
+                        }
                     }
                 }
                 continue;
@@ -1257,6 +1330,21 @@ async fn run_once(
             Ok(Ok(None)) => break, // EOF
             Ok(Ok(Some(l))) => {
                 *last_out.lock().await = Instant::now();
+                n_out += 1;
+                if raw_logged < 3 {
+                    raw_logged += 1;
+                    let shown: String = l.chars().take(300).collect();
+                    blog(format!("raw stdout job={job_id} line={shown}"));
+                }
+                // Tail for failure diagnostics (ERROR line + exit tail).
+                {
+                    let mut guard = err_tail.lock().await;
+                    guard.push(l.clone());
+                    if guard.len() > 20 {
+                        let excess = guard.len() - 20;
+                        guard.drain(..excess);
+                    }
+                }
                 // PB template first (byte counts); classic line kept as fallback.
                 if let Some((loaded, total, pct, speed, eta)) = parse_pb_line(&l) {
                     set_status(
@@ -1338,20 +1426,23 @@ async fn run_once(
                         },
                     )
                     .await;
-                } else if !l.starts_with('[') && !l.trim().is_empty() {
-                    // `--print after_move:filepath` emits the final path bare.
-                    // Only absolute paths qualify: warnings must never win.
-                    let t = l.trim();
-                    let absolute = t.starts_with('/') || (t.len() > 2 && t.as_bytes()[1] == b':');
-                    if absolute {
-                        final_path = Some(t.to_string());
-                    }
                 }
             }
             Ok(Err(e)) => return Err(anyhow!("output read: {e}")),
         }
     }
     let status = child.wait().await?;
+    let n_err = *n_err.lock().await;
+    blog(format!(
+        "pipe summary job={job_id} stderr_lines={n_err} stdout_lines={n_out} merging={merging}",
+    ));
+    // Final path via `--print-to-file` (after_move fires on success only).
+    // Read it, then remove the dotfile so failed/cancelled jobs leave nothing.
+    let final_path = std::fs::read_to_string(&print_file)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let _ = std::fs::remove_file(&print_file);
     if !status.success() {
         let tail = tail_text().await;
         blog(format!(
@@ -1373,27 +1464,24 @@ fn is_skip_line(line: &str) -> bool {
 
 /// Parse our `--progress-template` line:
 /// `[PB] downloaded|total|estimate|percent|speed|eta` (`NA` when unknown).
-/// Total prefers exact bytes, falling back to the `~` estimate.
+/// Total prefers exact bytes, falling back to the `~` estimate. yt-dlp
+/// renders the estimate as float (`302080.0`), so accept both forms.
+fn parse_num(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s == "NA" || s.is_empty() {
+        return None;
+    }
+    s.parse::<u64>()
+        .ok()
+        .or_else(|| s.parse::<f64>().ok().map(|v| v as u64))
+}
+
 fn parse_pb_line(line: &str) -> Option<(u64, Option<u64>, f64, Option<String>, Option<String>)> {
     let rest = line.strip_prefix("[PB]")?.trim();
     let mut parts = rest.splitn(6, '|');
     let loaded = parts.next()?.trim().parse::<u64>().ok()?;
-    let total = parts.next().and_then(|s| {
-        let s = s.trim();
-        if s == "NA" {
-            None
-        } else {
-            s.parse::<u64>().ok()
-        }
-    });
-    let estimate = parts.next().and_then(|s| {
-        let s = s.trim();
-        if s == "NA" {
-            None
-        } else {
-            s.parse::<u64>().ok()
-        }
-    });
+    let total = parts.next().and_then(parse_num);
+    let estimate = parts.next().and_then(parse_num);
     let pct = parts
         .next()?
         .trim()
@@ -1476,6 +1564,28 @@ mod tests {
         assert!(parse_pb_line("[PB] NA/NA/NA/ NA/NA/NA").is_none());
         assert!(parse_pb_line("[download]  12.3% of 4MiB").is_none());
         assert!(parse_pb_line("").is_none());
+    }
+
+    #[test]
+    fn pb_line_parses_float_estimate_from_live_capture() {
+        // Captured from yt-dlp 2026.08.19 (HLS: exact total NA, float estimate).
+        let (loaded, total, pct, speed, eta) =
+            parse_pb_line("[PB] 7168|NA|906240.0|  0.8%|   2.81KiB/s|Unknown").unwrap();
+        assert_eq!(loaded, 7168);
+        assert_eq!(total, Some(906240));
+        assert!((pct - 0.8).abs() < f64::EPSILON);
+        assert_eq!(speed.as_deref(), Some("2.81KiB/s"));
+        assert_eq!(eta, None);
+        assert_eq!(parse_num("302080.0"), Some(302080));
+        assert_eq!(parse_num("NA"), None);
+    }
+
+    #[test]
+    fn print_dotfile_names_recognized() {
+        assert!(is_print_file(".koutube-path-18ddab31dd9d5f2b.txt"));
+        assert!(!is_print_file(".koutube-path-18ddab31dd9d5f2b.mp4"));
+        assert!(!is_print_file("video [abc123].mp4"));
+        assert!(!is_print_file(".koutube-path-noext"));
     }
 
     #[test]
