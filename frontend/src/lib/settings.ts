@@ -30,6 +30,9 @@ export const SettingsSchema = z.object({
   variant: z.enum(['tonal-spot', 'vibrant', 'expressive']).default('tonal-spot'),
   maxConcurrent: z.number().int().min(1).max(8).default(4),
   showAdvanced: z.boolean().default(false),
+  autoUpdateCheck: z.boolean().default(true),
+  // Last successful update check (epoch ms); null = never checked.
+  lastUpdateCheck: z.number().int().nonnegative().nullable().default(null).catch(null),
   // A corrupt size must never reset the whole store: recover to null.
   windowSize: z.object({ w: z.number(), h: z.number() }).nullable().default(null).catch(null),
   downloadDefaults: DownloadDefaultsSchema.default({}),

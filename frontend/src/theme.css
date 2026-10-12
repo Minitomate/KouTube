@@ -260,6 +260,8 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 /* Offline banner: error tint + icon so the state is unmissable. */
 .banner-offline { display: flex; gap: 10px; align-items: flex-start; background: color-mix(in srgb, var(--error) 12%, var(--surface-container)); border: 1px solid var(--error); }
 .banner-offline > svg { flex: none; color: var(--error); margin-top: 2px; }
+/* Update banner: primary tint, same card contract as the offline banner. */
+.banner-update { background: color-mix(in srgb, var(--primary) 10%, var(--surface-container)); border: 1px solid var(--primary); }
 .segmented button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .segmented button svg { flex: none; }
 

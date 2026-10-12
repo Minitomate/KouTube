@@ -3,14 +3,28 @@ import { useStore } from '../lib/store';
 import { loadSettings, saveSettings, SEEDS, VARIANTS, type Settings } from '../lib/settings';
 import { QUALITIES } from '../lib/store';
 import { isTauri, pickFolder, getRecentLogs, openTerms } from '../lib/desktop';
+import { runUpdateCheck, runUpdateDownload, relaunchApp, openReleasesPage, getAppVersion, formatReleaseDate } from '../lib/updater';
 import PreferenceFields from '../components/PreferenceFields';
 import Switch from '../components/Switch';
 
 export default function Settings() {
-  const { set, queue } = useStore();
+  const { set, queue, updateStatus, updateVersion, updateNotes, updatePubDate, updateProgress, updateError } = useStore();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [note, setNote] = useState('');
   const [log, setLog] = useState<string[] | null>(null);
+  const [appVersion, setAppVersion] = useState('…');
+
+  useEffect(() => {
+    if (isTauri()) getAppVersion().then(setAppVersion).catch(() => setAppVersion('unknown'));
+  }, []);
+
+  async function manualCheck() {
+    await runUpdateCheck();
+    try {
+      const { settings: s } = await loadSettings();
+      setSettings(s);
+    } catch { /* stamp display is best-effort */ }
+  }
 
   useEffect(() => {
     loadSettings().then(({ settings: s, reset }) => {
@@ -80,6 +94,83 @@ export default function Settings() {
 
   return (
     <>
+      <div className="card">
+        <h2>Updates</h2>
+        {isTauri() ? (
+          <>
+            <div className="meta">
+              Current version: {appVersion}
+              {settings.lastUpdateCheck
+                ? ` · Last checked: ${new Date(settings.lastUpdateCheck).toLocaleString()}`
+                : ' · Never checked'}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <Switch
+                checked={settings.autoUpdateCheck}
+                onChange={() => update({ autoUpdateCheck: !settings.autoUpdateCheck })}
+                label="Check for updates automatically (once a day on launch)"
+              />
+            </div>
+            <div className="row" style={{ marginTop: 8 }}>
+              <button
+                className="pill-btn tonal"
+                onClick={() => void manualCheck()}
+                disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+              >
+                {updateStatus === 'checking' ? 'Checking…' : 'Check for updates'}
+              </button>
+              {updateStatus === 'available' && (
+                <button className="pill-btn filled" onClick={() => void runUpdateDownload()}>
+                  Download & install {updateVersion}
+                </button>
+              )}
+              {updateStatus === 'ready' && (
+                <button className="pill-btn filled" onClick={() => void relaunchApp()}>Restart now</button>
+              )}
+            </div>
+            {updateStatus === 'uptodate' && <div className="meta" style={{ marginTop: 8 }}>You're up to date.</div>}
+            {updateStatus === 'ready' && (
+              <div className="meta" style={{ marginTop: 8 }}>KouTube {updateVersion} is installed — restart to run it.</div>
+            )}
+            {updateStatus === 'available' && formatReleaseDate(updatePubDate) && (
+              <div className="meta" style={{ marginTop: 8 }}>Released {formatReleaseDate(updatePubDate)}.</div>
+            )}
+            {updateStatus === 'available' && updateNotes && (
+              <pre className="log-view" style={{ whiteSpace: 'pre-wrap' }}>{updateNotes}</pre>
+            )}
+            {updateStatus === 'downloading' && (
+              <div style={{ marginTop: 8 }}>
+                {updateProgress == null ? (
+                  <div className="progress-pill indeterminate" role="progressbar"><div /></div>
+                ) : (
+                  <div className="progress-pill" role="progressbar" aria-valuenow={updateProgress} aria-valuemin={0} aria-valuemax={100}>
+                    <div style={{ width: `${updateProgress}%` }} />
+                  </div>
+                )}
+                <div className="meta" style={{ marginTop: 4 }}>
+                  {updateProgress == null ? 'Downloading update…' : `Downloading update… ${updateProgress}%`}
+                </div>
+              </div>
+            )}
+            {updateStatus === 'error' && (
+              <div style={{ marginTop: 8 }}>
+                <div className="field-error" role="alert">{updateError ?? 'Update failed.'}</div>
+                <div className="meta">Self-update isn't supported by every package type (e.g. deb/rpm) — grab it from the releases page instead.</div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button className="pill-btn outlined" onClick={() => void openReleasesPage()}>Open releases page</button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="meta">Automatic updates live in the desktop app. Grab new versions from the releases page.</p>
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="pill-btn tonal" onClick={() => void openReleasesPage()}>Open releases page</button>
+            </div>
+          </>
+        )}
+      </div>
       <div className="card">
         <h2>Downloads</h2>
         <div className="meta">{settings.outDir ? `Folder: ${settings.outDir}` : 'No folder chosen yet.'}</div>

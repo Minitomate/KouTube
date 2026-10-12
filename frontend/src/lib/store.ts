@@ -146,6 +146,13 @@ interface State {
   seed: string;
   variant: 'tonal-spot' | 'vibrant' | 'expressive';
   showAdvanced: boolean;
+  updateStatus: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'uptodate' | 'error';
+  updateVersion: string | null;
+  updateNotes: string | null;
+  updatePubDate: string | null;
+  updateProgress: number | null;
+  updateError: string | null;
+  updateDismissed: boolean;
   set: (p: Partial<State>) => void;
   toggleCaption: (id: string) => void;
   toggleAudioTrack: (id: string) => void;
@@ -187,6 +194,13 @@ export const useStore = create<State>((set) => ({
   variant: 'tonal-spot' as const,
   showAdvanced: false,
   online: true,
+  updateStatus: 'idle' as const,
+  updateVersion: null,
+  updateNotes: null,
+  updatePubDate: null,
+  updateProgress: null,
+  updateError: null,
+  updateDismissed: false,
   set: (p) => set(p),
   toggleCaption: (id) =>
     set((s) => ({

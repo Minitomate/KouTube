@@ -15,6 +15,8 @@ Get the latest release for your system here:
 - **Linux:** AppImage (runs anywhere), `.deb`, `.rpm`
 - **Windows:** installer (`setup.exe`) and `.msi`
 
+The desktop app checks for updates once a day on launch and can install them in-app (AppImage and Windows installer; `.deb`/`.rpm` point at the releases page instead).
+
 On first launch the app fetches its tools (`yt-dlp` + `ffmpeg`, one-time download) and then works fully offline-capable — everything runs on your machine.
 
 ## Features

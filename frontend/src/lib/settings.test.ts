@@ -99,6 +99,22 @@ describe('settings store', () => {
     expect(DEFAULTS.maxConcurrent).toBe(4);
   });
 
+  it('defaults the update settings on old stores', async () => {
+    backing.set('koutube-settings', JSON.stringify({ outDir: '/tmp/x' }));
+    const { settings, reset } = await loadSettings();
+    expect(reset).toBe(false);
+    expect(settings.autoUpdateCheck).toBe(true);
+    expect(settings.lastUpdateCheck).toBeNull();
+  });
+
+  it('round-trips the update settings', async () => {
+    await saveSettings({ ...DEFAULTS, autoUpdateCheck: false, lastUpdateCheck: 123 });
+    const { settings, reset } = await loadSettings();
+    expect(reset).toBe(false);
+    expect(settings.autoUpdateCheck).toBe(false);
+    expect(settings.lastUpdateCheck).toBe(123);
+  });
+
   it('recovers a corrupt window size without resetting everything', async () => {
     backing.set('koutube-settings', JSON.stringify({ ...DEFAULTS, windowSize: { w: 'wide', h: null } }));
     const { settings, reset } = await loadSettings();
