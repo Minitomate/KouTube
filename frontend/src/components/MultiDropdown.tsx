@@ -13,10 +13,11 @@ interface Props {
   onToggle: (id: string) => void;
   emptyText: string;
   summaryNone: string;
+  disabled?: boolean;
 }
 
 /** Shared multi-select dropdown (audio tracks, captions). */
-export default function MultiDropdown({ label, options, selected, onToggle, emptyText, summaryNone }: Props) {
+export default function MultiDropdown({ label, options, selected, onToggle, emptyText, summaryNone, disabled }: Props) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const buttonId = `md-${label.replace(/\W+/g, '-').toLowerCase()}`;
@@ -49,6 +50,8 @@ export default function MultiDropdown({ label, options, selected, onToggle, empt
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-labelledby={buttonId}
+        disabled={disabled}
+        title={disabled ? 'No manual captions for this video' : undefined}
         onClick={() => setOpen((v) => !v)}
       >
         {summary}

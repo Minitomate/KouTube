@@ -269,10 +269,10 @@ test.describe('advanced settings toggle', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await expect(page.getByLabel('Container')).toHaveCount(0);
-    await page.getByRole('checkbox', { name: /show advanced/i }).check();
+    await page.getByRole('switch', { name: /show advanced/i }).click();
     await expect(page.getByLabel('Container')).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('checkbox', { name: /show advanced/i })).toBeChecked();
+    await expect(page.getByRole('switch', { name: /show advanced/i })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByLabel('Container')).toBeVisible();
   });
 
@@ -302,9 +302,9 @@ test.describe('advanced settings toggle', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await page.getByRole('checkbox', { name: /show advanced/i }).check();
+    await page.getByRole('switch', { name: /show advanced/i }).click();
     await app.pickAudioTrack('es');
-    await page.getByRole('checkbox', { name: /show advanced/i }).uncheck();
+    await page.getByRole('switch', { name: /show advanced/i }).click();
     await app.download();
     // en (default) + es (kept through collapse) still triggers the MKV note.
     await expect(page.getByText(/Merging to MKV/)).toBeVisible({ timeout: 15_000 });

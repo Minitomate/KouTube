@@ -16,6 +16,10 @@ export class KouTubePage {
     await this.page.getByLabel('Inspect video').click();
   }
 
+  async clearLink() {
+    await this.page.getByLabel('Clear link').click();
+  }
+
   async inspectUrl(url: string) {
     await this.pasteUrl(url);
     await this.inspect();
@@ -29,7 +33,8 @@ export class KouTubePage {
 
   /** Reveal advanced controls (idempotent — safe when already expanded). */
   async advanced() {
-    await this.page.getByRole('checkbox', { name: /show advanced/i }).check();
+    const sw = this.page.getByRole('switch', { name: /show advanced/i });
+    if ((await sw.getAttribute('aria-checked')) !== 'true') await sw.click();
   }
 
   async pickQuality(q: string) {

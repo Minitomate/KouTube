@@ -57,8 +57,9 @@ test.describe('theme modes', () => {
     await app.inspectUrl(URL);
     const btn = page.getByRole('button', { name: /more|less/i });
     await expect(btn).toBeVisible();
-    // Must be transparent (themed), never the browser default light face.
-    await expect(btn).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    // YouTube-style description box: themed fill, never browser default.
+    const bg = await btn.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
   });
 });
 

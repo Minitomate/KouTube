@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Home, { ThemeToggle } from './routes/Home';
 import Settings from './routes/Settings';
 import LogoIcon from './components/LogoIcon';
+import { Icon, PATHS } from './components/icons';
 import { useStore, resolveTheme, applyDownloadDefaults } from './lib/store';
 import { loadSettings, applyTheme } from './lib/settings';
 
@@ -30,11 +31,11 @@ function Shell() {
       <header className="topbar">
         <div className="brand" aria-label="KouTube"><LogoIcon />ou<span>Tube</span></div>
         <nav className="row" aria-label="Sections">
-          <button className="pill-btn tonal" style={{ minHeight: 40 }} aria-pressed={view === 'home'} onClick={() => set({ view: 'home' })}>
-            Download
+          <button className="pill-btn tonal icon-btn" aria-pressed={view === 'home'} aria-label="Home" title="Home" onClick={() => set({ view: 'home' })}>
+            <Icon d={PATHS.home} />
           </button>
-          <button className="pill-btn tonal" style={{ minHeight: 40 }} aria-pressed={view === 'settings'} onClick={() => set({ view: 'settings' })}>
-            Settings
+          <button className="pill-btn tonal icon-btn" aria-pressed={view === 'settings'} aria-label="Settings" title="Settings" onClick={() => set({ view: 'settings' })}>
+            <Icon d={PATHS.settings} />
           </button>
           <ThemeToggle />
         </nav>

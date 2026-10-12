@@ -4,6 +4,7 @@ import { loadSettings, saveSettings, SEEDS, VARIANTS, type Settings } from '../l
 import { QUALITIES } from '../lib/store';
 import { isTauri, pickFolder, getRecentLogs, openTerms } from '../lib/desktop';
 import PreferenceFields from '../components/PreferenceFields';
+import Switch from '../components/Switch';
 
 export default function Settings() {
   const { set, queue } = useStore();
@@ -85,21 +86,20 @@ export default function Settings() {
         <div className="row" style={{ marginTop: 8 }}>
           <button className="pill-btn tonal" onClick={chooseFolder}>Choose folder</button>
         </div>
-        <label className="check" style={{ marginTop: 8 }}>
-          <input
-            type="checkbox"
+        <div style={{ marginTop: 8 }}>
+          <Switch
             checked={settings.splitKinds}
-            onChange={(e) => update({ splitKinds: e.target.checked })}
+            onChange={() => update({ splitKinds: !settings.splitKinds })}
+            label="Separate audio and video into Audio/ and Video/ subfolders"
           />
-          Separate audio and video into Audio/ and Video/ subfolders
-        </label>
+        </div>
         <div className="row" style={{ marginTop: 12 }}>
           <span className="meta" id="concurrency-label">Max concurrent downloads</span>
-          <div className="segmented" role="group" aria-labelledby="concurrency-label">
-            <button aria-label="Fewer concurrent downloads" onClick={() => update({ maxConcurrent: Math.max(1, settings.maxConcurrent - 1) })}>−</button>
-            <button aria-label="More concurrent downloads" onClick={() => update({ maxConcurrent: Math.min(8, settings.maxConcurrent + 1) })}>+</button>
+          <div className="stepper-num" role="group" aria-labelledby="concurrency-label">
+            <button aria-label="Fewer concurrent downloads" title="Fewer concurrent downloads" onClick={() => update({ maxConcurrent: Math.max(1, settings.maxConcurrent - 1) })}>−</button>
+            <output aria-live="polite" aria-label={`${settings.maxConcurrent} concurrent downloads`}>{settings.maxConcurrent}</output>
+            <button aria-label="More concurrent downloads" title="More concurrent downloads" onClick={() => update({ maxConcurrent: Math.min(8, settings.maxConcurrent + 1) })}>+</button>
           </div>
-          <span className="meta" aria-live="polite" aria-label={`${settings.maxConcurrent} concurrent downloads`}>{settings.maxConcurrent}</span>
         </div>
       </div>
       <div className="card">

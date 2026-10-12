@@ -1,5 +1,5 @@
-"""Manual-only caption filtering: subtitles used, automatic_captions ignored, live_chat excluded."""
-from app.services.ytdlp import filter_manual_captions, pick_avatar
+"""Caption track listing: manual from subtitles, auto from automatic_captions, live_chat excluded."""
+from app.services.ytdlp import filter_manual_captions, list_auto_captions, pick_avatar
 
 
 def test_manual_only_captions():
@@ -24,6 +24,20 @@ def test_manual_only_captions():
 def test_no_subtitles_no_autos():
     info = {"automatic_captions": {"en": [{"name": "auto"}]}}
     assert filter_manual_captions(info) == []
+
+
+def test_auto_captions_listed_separately():
+    info = {
+        "subtitles": {"en": [{"name": "English"}]},
+        "automatic_captions": {
+            "en": [{"name": "English (auto)"}],
+            "live_chat": [{"name": "Live chat"}],
+        },
+    }
+    autos = list_auto_captions(info)
+    assert {c.lang for c in autos} == {"en"}
+    assert "live_chat" not in {c.lang for c in autos}
+    assert list_auto_captions({}) == []
 
 
 def test_empty_info():

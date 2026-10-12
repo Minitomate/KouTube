@@ -232,12 +232,13 @@ async fn missing_captions(spec: &DownloadSpec) -> Vec<String> {
     }
     spec.captions
         .iter()
+        .map(|l| cap_lang(l))
         .filter(|l| {
             !found
                 .iter()
                 .any(|n| n.contains(&format!(".{l}.")) || n.ends_with(&format!(".{l}")))
         })
-        .cloned()
+        .map(|l| l.to_string())
         .collect()
 }
 
@@ -557,7 +558,7 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
         return serde_json::json!({
             "videoId": null, "title": info.get("title").and_then(|v| v.as_str()).unwrap_or("Playlist"),
             "thumbnail": info.get("thumbnail"), "duration": null,
-            "formats": [], "audioTracks": [], "manualCaptions": [],
+            "formats": [], "audioTracks": [], "manualCaptions": [], "autoCaptions": [],
             "is_playlist": true, "entries": entries,
         });
     }
@@ -589,6 +590,15 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
         langs.sort();
         for lang in langs {
             caps.push(serde_json::json!({ "lang": lang, "label": lang }));
+        }
+    }
+    // Automatic captions: info["automatic_captions"], no live_chat.
+    let mut auto_caps = vec![];
+    if let Some(subs) = info.get("automatic_captions").and_then(|s| s.as_object()) {
+        let mut langs: Vec<_> = subs.keys().filter(|l| l.as_str() != "live_chat").collect();
+        langs.sort();
+        for lang in langs {
+            auto_caps.push(serde_json::json!({ "lang": lang, "label": lang }));
         }
     }
     // Audio tracks grouped by language. Original is detected via the
@@ -649,6 +659,7 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
         "timestamp": info.get("timestamp").or_else(|| info.get("release_timestamp")),
         "avatarUrl": avatar,
         "formats": out_formats, "audioTracks": tracks, "manualCaptions": caps,
+        "autoCaptions": auto_caps,
         "is_playlist": false, "entries": [],
     })
 }
@@ -724,9 +735,27 @@ fn build_format(
 }
 
 /// Subtitle args shared by the embed path and the captions-only path.
-fn sub_args(langs: &[String], embed: bool, fmt: &str) -> Vec<String> {
+/// UI selection ids for auto captions arrive as "auto:<lang>".
+fn cap_lang(id: &str) -> &str {
+    id.strip_prefix("auto:").unwrap_or(id)
+}
+
+/// Split selections into (manual langs, auto langs), both bare codes.
+fn split_cap_langs(captions: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut manual = vec![];
+    let mut auto = vec![];
+    for c in captions {
+        match c.strip_prefix("auto:") {
+            Some(lang) => auto.push(lang.to_string()),
+            None => manual.push(c.clone()),
+        }
+    }
+    (manual, auto)
+}
+
+fn sub_args(langs: &[String], embed: bool, fmt: &str, auto: bool) -> Vec<String> {
     let mut args = vec![
-        "--write-subs".to_string(),
+        (if auto { "--write-auto-subs" } else { "--write-subs" }).to_string(),
         "--sub-langs".to_string(),
         langs.join(","),
         "--sub-format".to_string(),
@@ -790,7 +819,13 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
             format!("{}/%(title)s [%(id)s].%(ext)s", spec.out_dir),
             "--skip-download".to_string(),
         ];
-        args.extend(sub_args(&spec.captions, false, &spec.captions_format));
+        let (cap_manual, cap_auto) = split_cap_langs(&spec.captions);
+        if !cap_manual.is_empty() {
+            args.extend(sub_args(&cap_manual, false, &spec.captions_format, false));
+        }
+        if !cap_auto.is_empty() {
+            args.extend(sub_args(&cap_auto, false, &spec.captions_format, true));
+        }
         if spec.overwrite {
             args.push("--force-overwrites".to_string());
         }
@@ -845,7 +880,13 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec) -> Result<Vec<String>> {
         args.extend(["--merge-output-format".to_string(), spec.container.clone()]);
     }
     if !spec.captions.is_empty() {
-        args.extend(sub_args(&spec.captions, true, &spec.captions_format));
+        let (cap_manual, cap_auto) = split_cap_langs(&spec.captions);
+        if !cap_manual.is_empty() {
+            args.extend(sub_args(&cap_manual, true, &spec.captions_format, false));
+        }
+        if !cap_auto.is_empty() {
+            args.extend(sub_args(&cap_auto, true, &spec.captions_format, true));
+        }
     }
     if spec.overwrite {
         args.push("--force-overwrites".to_string());
@@ -1694,15 +1735,30 @@ mod tests {
     #[test]
     fn sub_args_embed_vs_sidecar() {
         let langs = vec!["en".to_string(), "de".to_string()];
-        let embed = sub_args(&langs, true, "srt");
+        let embed = sub_args(&langs, true, "srt", false);
         assert!(embed.contains(&"--embed-subs".to_string()));
         assert!(embed.contains(&"en,de".to_string()));
         assert!(embed.contains(&"srt/best".to_string()));
-        let sidecar = sub_args(&langs, false, "vtt");
+        let sidecar = sub_args(&langs, false, "vtt", false);
         assert!(!sidecar.contains(&"--embed-subs".to_string()));
         assert!(sidecar.contains(&"--write-subs".to_string()));
         assert!(sidecar.contains(&"vtt/best".to_string()));
         assert!(!sidecar.contains(&"--skip-download".to_string()));
+        let auto_sidecar = sub_args(&langs, false, "srt", true);
+        assert!(auto_sidecar.contains(&"--write-auto-subs".to_string()));
+        assert!(!auto_sidecar.contains(&"--write-subs".to_string()));
+    }
+
+    #[test]
+    fn split_cap_langs_separates_auto_prefix() {
+        let (manual, auto) = split_cap_langs(&[
+            "en".to_string(),
+            "auto:es".to_string(),
+        ]);
+        assert_eq!(manual, vec!["en".to_string()]);
+        assert_eq!(auto, vec!["es".to_string()]);
+        assert_eq!(cap_lang("auto:fr"), "fr");
+        assert_eq!(cap_lang("de"), "de");
     }
 
     #[test]

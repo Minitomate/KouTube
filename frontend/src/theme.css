@@ -65,25 +65,27 @@ body {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 .app-shell { max-width: 1200px; margin: 0 auto; padding: 16px 16px 140px; }
-/* Focused single column for everything except the two-column inspect grid. */
-.app-shell > :not(.inspect-grid) { max-width: 640px; margin-left: auto; margin-right: auto; }
-.app-shell > .inspect-grid { max-width: none; }
+/* Focused single column, except full-width home sections. */
+.app-shell > :not(.inspect-grid):not(.queue-grid):not(.urlbar-card):not(.banner-card) { max-width: 640px; margin-left: auto; margin-right: auto; }
+.app-shell > .inspect-grid, .app-shell > .queue-grid, .app-shell > .urlbar-card, .app-shell > .banner-card { max-width: none; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .topbar .row { flex-wrap: wrap; }
 .brand { font-weight: 700; font-size: 20px; letter-spacing: 0.2px; display: inline-flex; align-items: center; gap: 3px; }
 .brand span { color: var(--primary); }
-
-.stepper { display: flex; gap: 8px; margin: 12px 0 20px; }
-.step { flex: 1; height: 6px; border-radius: 999px; background: var(--surface-container-high); }
-.step.active { background: var(--primary); }
 
 .card {
   background: var(--surface-container);
   border-radius: var(--radius-card);
   padding: 16px;
   margin-bottom: 12px;
+  transition: background-color 0.45s ease, color 0.25s ease, border-color 0.25s ease;
 }
+.card:hover {
+  background: color-mix(in srgb, var(--primary) 6%, var(--surface-container));
+}
+.card.modal, .card.modal:hover { background: var(--surface-container); }
 .card h2 { font-size: 15px; margin: 0 0 10px; }
+.video-title { font-size: 17px; margin: 12px 0 8px; }
 
 .pill-btn {
   border: 0; border-radius: var(--radius-pill);
@@ -98,7 +100,7 @@ body {
 .pill-btn.text:hover { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .pill-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.urlbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.urlbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .urlbar input {
   flex: 1 1 200px; min-width: 0; border-radius: var(--radius-pill); min-height: var(--pill-h);
   border: 1px solid var(--outline-variant); padding: 0 20px; font-size: 15px;
@@ -129,12 +131,21 @@ body {
   border: 1px solid var(--outline); background: var(--surface); color: var(--on-surface); font-size: 14px;
 }
 .select-pill option { background: var(--surface); color: var(--on-surface); }
-.desc-toggle { margin-top: 12px; }
 .desc-box {
+  display: block; width: 100%; text-align: left; cursor: pointer;
   margin-top: 10px; background: var(--surface-container-high);
-  border-radius: 12px; padding: 10px 12px; font-size: 13px;
+  border: 0; border-radius: 12px; padding: 10px 12px; font-size: 13px;
+  color: var(--on-surface); font-family: inherit;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
-.desc-box .desc-head { font-weight: 600; margin-bottom: 6px; }
+.desc-box.collapsed:hover { background: var(--primary-container); color: var(--on-primary-container); }
+.desc-box .desc-head { display: block; font-weight: 600; margin-bottom: 6px; }
+.desc-snippet {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; white-space: pre-wrap; margin: 0;
+}
+.desc-box .desc { margin: 0; }
+.desc-more { font-weight: 600; }
 
 .progress-pill { background: var(--surface-container-high); border-radius: var(--radius-pill); height: 20px; overflow: hidden; }
 .progress-pill > div { height: 100%; background: var(--primary); border-radius: var(--radius-pill); transition: width 0.2s; }
@@ -156,12 +167,13 @@ body {
 .empty { color: var(--on-surface-variant); font-size: 14px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .meta { font-size: 13px; color: var(--on-surface-variant); }
-.job { border-top: 1px solid var(--outline-variant); padding: 10px 0; }
+.job { border-top: 1px solid var(--outline-variant); padding: 10px 12px; border-radius: 12px; background: var(--surface-container-high); transition: background-color 0.45s ease; }
+.job:hover { background: color-mix(in srgb, var(--primary) 12%, var(--surface-container-high)); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
-.inspect-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.inspect-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 @media (min-width: 860px) {
-  .inspect-grid { grid-template-columns: 1.25fr 1fr; align-items: start; }
+  .inspect-grid { grid-template-columns: 1fr 1fr; align-items: start; }
 }
 .thumb-wrap { position: relative; border-radius: 16px; overflow: hidden; background: var(--surface-container-high); aspect-ratio: 16 / 9; }
 .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -186,12 +198,13 @@ fieldset.field { border: 0; padding: 0; }
   .progress-pill > div { transition: none; }
   .progress-pill.indeterminate > div { animation: none; }
   .thumb-wrap img { transition: none; }
-  .pill-btn, .chip, .segmented button,
+  .pill-btn, .chip, .segmented button, .switch-thumb, .md-panel, .desc-box, .job,
   body, .card, .urlbar input, .select-pill { transition: none; }
   .pill-btn:active:not(:disabled), .chip:active, .segmented button:active { transform: none; }
+  .md-panel { animation: none; }
+  .spinner { animation: none; }
 }
 
-.meta-row { display: inline-flex; gap: 5px; align-items: center; }
 .verified-mark { color: var(--outline); vertical-align: -2px; margin-left: 4px; flex: none; }
 
 /* Motion: press states, theme cross-fade. */
@@ -239,6 +252,56 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
   .queue-cards { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
   .queue-cards .job { border: 1px solid var(--outline-variant); border-radius: 16px; padding: 12px; }
 }
-@media (min-width: 860px) {
-  .inspect-grid > div:last-child { max-width: 420px; }
+
+/* Icon-only buttons: fixed 44px target, svg inherits color. */
+.icon-btn { width: 44px; min-height: 44px; padding: 0; flex: none; aspect-ratio: 1; border-radius: 50%; }
+.icon-btn svg { flex: none; }
+
+/* Offline banner: error tint + icon so the state is unmissable. */
+.banner-offline { display: flex; gap: 10px; align-items: flex-start; background: color-mix(in srgb, var(--error) 12%, var(--surface-container)); border: 1px solid var(--error); }
+.banner-offline > svg { flex: none; color: var(--error); margin-top: 2px; }
+.segmented button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.segmented button svg { flex: none; }
+
+/* Switch: track + sliding thumb, text label beside. */
+.switch { display: inline-flex; align-items: center; gap: 10px; background: transparent; border: 0; cursor: pointer; padding: 6px 4px; font-size: 14px; color: var(--on-surface); }
+.switch-thumb { position: relative; width: 44px; height: 24px; border-radius: 999px; background: var(--surface-container-high); border: 1px solid var(--outline-variant); transition: background-color 0.18s ease; flex: none; }
+.switch-thumb::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--on-surface-variant); transition: transform 0.18s ease, background-color 0.18s ease; }
+.switch[aria-checked='true'] .switch-thumb { background: var(--primary); border-color: transparent; }
+.switch[aria-checked='true'] .switch-thumb::after { transform: translateX(20px); background: var(--on-primary); }
+.switch-text { text-align: left; }
+
+/* Stylized multi-checkboxes (dropdown keeps native input for a11y). */
+.md-option input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary); cursor: pointer; flex: none; }
+
+/* Dropdown open animation (fade + slight scale). */
+.md-panel { transform-origin: top; animation: md-in 0.12s ease; }
+@keyframes md-in { from { opacity: 0; transform: scaleY(0.97); } to { opacity: 1; transform: scaleY(1); } }
+
+/* Numeric stepper (concurrency): joined minus/value/plus. */
+.stepper-num { display: inline-flex; align-items: center; background: var(--surface-container-high); border-radius: 999px; padding: 4px; gap: 4px; }
+.stepper-num button { border: 0; border-radius: 999px; min-width: 48px; min-height: 40px; font-size: 18px; font-weight: 700; cursor: pointer; background: transparent; color: var(--on-surface); }
+.stepper-num button:active { transform: scale(0.95); }
+.stepper-num output { min-width: 32px; text-align: center; font-weight: 700; }
+
+/* Inspect loading spinner. */
+.spinner { width: 20px; height: 20px; border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Visible keyboard focus for new controls. */
+.icon-btn:focus-visible, .switch:focus-visible, .stepper-num button:focus-visible,
+.segmented button:focus-visible, .md-button:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px;
 }
+
+/* Transfer card: title on its own row, meta columns below. */
+.job-title-row { margin-bottom: 6px; }
+.job-meta-row { margin-bottom: 8px; }
+.job-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.job-meta-row { justify-content: flex-start; }
+.job-meta-row .job-status { flex: 1; }
+.job-meta-row .pill-btn.text { margin-left: auto; }
+
+/* Disabled mode / dropdown (no manual captions). */
+.segmented button:disabled { opacity: 0.45; cursor: not-allowed; }
+.md-button:disabled { opacity: 0.55; cursor: not-allowed; }

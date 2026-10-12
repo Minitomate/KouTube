@@ -1,6 +1,8 @@
 import { useStore, type Theme } from '../lib/store';
+import { Icon, PATHS } from './icons';
 
 const ORDER: Theme[] = ['light', 'dark', 'auto'];
+const ICON = { light: PATHS.sun, dark: PATHS.moon, auto: PATHS.monitor } as const;
 
 export default function ThemeToggle() {
   const { theme, set } = useStore();
@@ -11,12 +13,12 @@ export default function ThemeToggle() {
     : 'Switch to automatic theme';
   return (
     <button
-      className="pill-btn tonal"
-      style={{ minHeight: 40 }}
+      className="pill-btn tonal icon-btn"
       aria-label={label}
+      title={label}
       onClick={() => set({ theme: next })}
     >
-      {theme === 'auto' ? 'Auto' : theme === 'light' ? 'Dark' : 'Light'}
+      <Icon d={ICON[theme]} />
     </button>
   );
 }

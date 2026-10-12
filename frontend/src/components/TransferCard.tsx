@@ -3,6 +3,7 @@ import { useStore } from '../lib/store';
 import { kindBadge, statusLine } from '../lib/transfer';
 import { isTauri, playFile, revealFile, trashDownload } from '../lib/desktop';
 import Confirm from './Confirm';
+import { Icon, PATHS } from './icons';
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -64,10 +65,12 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   }
   return (
     <div className="job">
-      <div className="row">
+      <div className="row job-title-row">
+        <strong className="job-title">{item.title}</strong>
+      </div>
+      <div className="row job-meta-row">
         {badge && <span className="chip tonal" aria-label={`Download type ${badge}`}>{badge}</span>}
-        <strong style={{ flex: 1 }}>{item.title}</strong>
-        <span className="meta">{statusText}</span>
+        <span className="meta job-status">{statusText}</span>
         <button className="pill-btn text" style={{ minHeight: 32 }} aria-label={`Remove ${item.title}`} onClick={() => onRemove(transferId)}>
           ✕
         </button>
@@ -86,10 +89,10 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       {actionError && <div className="field-error" role="alert">{actionError}</div>}
       {done && item.filepath && isTauri() && (
         <div className="row" style={{ marginTop: 8 }}>
-          <button className="pill-btn tonal" style={{ minHeight: 40 }} onClick={play}>Play</button>
-          <button className="pill-btn outlined" style={{ minHeight: 40 }} onClick={reveal}>Show in folder</button>
-          <button className="pill-btn outlined" style={{ minHeight: 40 }} onClick={() => setConfirmTrash(true)}>
-            Delete file
+          <button className="pill-btn tonal icon-btn" onClick={play} aria-label={`Play ${item.title}`} title="Play"><Icon d={PATHS.play} /></button>
+          <button className="pill-btn outlined icon-btn" onClick={reveal} aria-label={`Show ${item.title} in folder`} title="Show in folder"><Icon d={PATHS.folder} /></button>
+          <button className="pill-btn outlined icon-btn" onClick={() => setConfirmTrash(true)} aria-label={`Delete ${item.title}`} title="Delete file">
+            <Icon d={PATHS.trash} />
           </button>
         </div>
       )}

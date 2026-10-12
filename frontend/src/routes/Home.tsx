@@ -3,6 +3,7 @@ import pLimit from 'p-limit';
 import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, type Transfer, type AudioQuality } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
+import { captionLabel } from '../lib/lang';
 import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, existingOutputs } from '../lib/desktop';
 import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
 import Confirm from '../components/Confirm';
@@ -11,8 +12,8 @@ import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
 import DownloadOptionsCard from '../components/DownloadOptionsCard';
 import QueueView from '../components/QueueView';
-import Stepper from '../components/Stepper';
 import ThemeToggle from '../components/ThemeToggle';
+import { Icon, PATHS } from '../components/icons';
 
 const ZIP_CAP = 10;
 
@@ -345,16 +346,21 @@ export default function Home() {
     if (media?.isPlaylist && (media.entries?.length ?? 0) > ZIP_CAP) {
       setError(`ZIP capped at first ${ZIP_CAP} of ${media.entries?.length} videos.`);
     }
-    const zipItems = videos.flatMap((v, i) => captions.map((lang, j) => ({
-      id: `zip-${i}-${j}`,
-      filename: srtFilename(v.title, v.videoId, lang, captionsFormat),
-      url: subsUrl(v.pageUrl, lang, captionsFormat),
-      sizeEstimate: null as number | null,
-    })));
+    const zipItems = videos.flatMap((v, i) => captions.map((sel, j) => {
+      const auto = sel.startsWith('auto:');
+      const lang = auto ? sel.slice(5) : sel;
+      return {
+        id: `zip-${i}-${j}`,
+        filename: srtFilename(v.title, v.videoId, auto ? `${lang}-auto` : lang, captionsFormat),
+        url: subsUrl(v.pageUrl, lang, captionsFormat, auto),
+        sizeEstimate: null as number | null,
+        detail: auto ? `${lang} (auto)` : lang,
+      };
+    }));
     if (zipItems.length === 1) {
       const it = zipItems[0];
       const id = `${Date.now()}-sub`;
-      const lang = captions[0];
+      const lang = it.detail;
       upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'downloading', kind: 'captions', detail: lang });
       try {
         const res = await fetch(it.url);
@@ -372,7 +378,7 @@ export default function Home() {
     abortRefs.current.add(zipCtl);
     setCanCancel(true);
     for (const it of zipItems) {
-      upsertTransfer({ id: it.id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'preparing', kind: 'captions', detail: captions.join(', ') });
+      upsertTransfer({ id: it.id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'preparing', kind: 'captions', detail: captions.map((c) => captionLabel(c)).join(', ') });
     }
     try {
       await downloadZip(
@@ -539,7 +545,7 @@ export default function Home() {
       // Detail for the badge: language per audio track, quality/container for video.
       const plan = planDownload();
       const videoDetail = kindDetail('video', undefined, plan.quality, plan.container);
-      const capDetail = captions.join(', ') || undefined;
+      const capDetail = captions.map((c) => captionLabel(c)).join(', ') || undefined;
       if (media?.isPlaylist && media.entries?.length) {
         const items = media.entries.slice(0, ZIP_CAP);
         items.forEach((e, i) => {
@@ -585,16 +591,18 @@ export default function Home() {
 
   return (
     <>
-      <Stepper />
       <UrlBar />
       {!online && (
-        <div className="card" role="alert">
-          <strong>You're offline.</strong>
-          <span className="meta"> Downloads and inspection need a connection — they'll work again when you're back.</span>
+        <div className="card banner-card banner-offline" role="alert">
+          <Icon d={PATHS.alert} />
+          <div>
+            <strong>You're offline.</strong>
+            <span className="meta"> Downloads and inspection need a connection — they'll work again when you're back.</span>
+          </div>
         </div>
       )}
       {media?.isPlaylist && (
-        <div className="card">
+        <div className="card banner-card">
           <h2>{media.title}</h2>
           <div className="meta">playlist · {media.playlistCount} videos {isTauri() ? `(files, max ${ZIP_CAP})` : `(ZIP, max ${ZIP_CAP})`}</div>
         </div>

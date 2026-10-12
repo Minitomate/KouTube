@@ -57,6 +57,7 @@ class ResolveResponse(BaseModel):
     formats: list[FormatInfo] = Field(default_factory=list)
     audioTracks: list[AudioTrack] = Field(default_factory=list)
     manualCaptions: list[CaptionTrack] = Field(default_factory=list)
+    autoCaptions: list[CaptionTrack] = Field(default_factory=list)
     is_playlist: bool = False
     entries: list[PlaylistEntry] = Field(default_factory=list)
 

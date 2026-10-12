@@ -321,9 +321,10 @@ async def mux(token: str, request: Request):
              subs=data.get("s") or [])
     try:
         sub_files: list[str] = []
+        auto_langs = set(data.get("sa") or [])
         for lang in (data.get("s") or []):
             texts = await asyncio.to_thread(Y.fetch_sub_texts, data["u"], [lang],
-                                            data.get("f", "srt"))
+                                            data.get("f", "srt"), lang in auto_langs)
             text = texts.get(lang)
             if text:
                 ext = "vtt" if data.get("f") == "vtt" else "srt"

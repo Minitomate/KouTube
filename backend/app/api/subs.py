@@ -1,6 +1,7 @@
-"""GET /api/subs — captions-only download: one manual subtitle file per call.
+"""GET /api/subs — captions-only download: one subtitle file per call.
 
-Manual tracks only (never automatic_captions). The frontend loops over the
+Manual and automatic tracks; auto is fetched with writeautomaticsub so a
+same-lang manual track can never shadow it. The frontend loops over the
 selected languages and zips multiple files client-side.
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ router = APIRouter()
 
 @router.get("/subs")
 @L.limiter.limit("30/minute")
-async def subs(url: str, lang: str, request: Request, fmt: str = "srt"):
+async def subs(url: str, lang: str, request: Request, fmt: str = "srt", auto: bool = False):
     if fmt not in ("srt", "vtt"):
         raise HTTPException(status_code=400, detail={
             "code": "bad-format", "message": "Subtitles format must be srt or vtt."})
@@ -32,11 +33,12 @@ async def subs(url: str, lang: str, request: Request, fmt: str = "srt"):
         code, msg = Y.classify_error(exc)
         raise HTTPException(status_code=400, detail={"code": code, "message": msg})
     manual_langs = {c.lang for c in Y.filter_manual_captions(info)}
-    if lang not in manual_langs:
+    auto_langs = {c.lang for c in Y.list_auto_captions(info)}
+    if lang not in manual_langs and not (auto and lang in auto_langs):
         raise HTTPException(status_code=400, detail={
-            "code": "no-captions", "message": "No manual captions for this language."})
+            "code": "no-captions", "message": "No captions for this language."})
     try:
-        texts = await run_in_threadpool(Y.fetch_sub_texts, page, [lang], fmt)
+        texts = await run_in_threadpool(Y.fetch_sub_texts, page, [lang], fmt, auto)
     except Exception as exc:  # noqa: BLE001
         code, msg = Y.classify_error(exc)
         raise HTTPException(status_code=400, detail={"code": code, "message": msg})

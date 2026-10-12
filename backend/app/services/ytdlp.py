@@ -66,6 +66,23 @@ def filter_manual_captions(info: dict) -> list[CaptionTrack]:
     return sorted(out, key=lambda c: c.lang)
 
 
+def list_auto_captions(info: dict) -> list[CaptionTrack]:
+    """Auto-generated captions from info['automatic_captions']; exclude live_chat."""
+    subs = info.get("automatic_captions") or {}
+    out: list[CaptionTrack] = []
+    for lang, tracks in subs.items():
+        if lang == "live_chat":
+            continue
+        label = lang
+        try:
+            if tracks and isinstance(tracks, list) and tracks[0].get("name"):
+                label = f"{lang} - {tracks[0]['name']}"
+        except Exception:
+            pass
+        out.append(CaptionTrack(lang=lang, label=label))
+    return sorted(out, key=lambda c: c.lang)
+
+
 def group_audio_tracks(info: dict) -> list[AudioTrack]:
     """Group audio streams by language; original via format_note marker, else first."""
     seen: dict[str, AudioTrack] = {}
@@ -192,6 +209,7 @@ def build_resolve_payload(info: dict, avatar: str | None = None) -> dict:
         "formats": collect_formats(info),
         "audioTracks": group_audio_tracks(info),
         "manualCaptions": filter_manual_captions(info),
+        "autoCaptions": list_auto_captions(info),
         "is_playlist": False, "entries": [],
     }
 
@@ -371,15 +389,19 @@ def pick_streams(info: dict, container: str, quality: int | str,
             "audio_direct": _is_direct(audios[0])}
 
 
-def fetch_sub_texts(url: str, langs: list[str], fmt: str = "srt") -> dict[str, str]:
-    """Download manual subtitle texts to an OS-temp dir and return {lang: text}."""
+def fetch_sub_texts(url: str, langs: list[str], fmt: str = "srt", auto: bool = False) -> dict[str, str]:
+    """Download subtitle texts to an OS-temp dir and return {lang: text}.
+
+    auto=True fetches automatic captions only (writesubtitles off so a
+    same-lang manual track can never shadow the result).
+    """
     import os
     import tempfile
     if not langs:
         return {}
     tmp = tempfile.mkdtemp(prefix="koutube-subs-")
-    opts = {**BASE_OPTS, "skip_download": True, "writesubtitles": True,
-            "writeautomaticsub": False, "subtitleslangs": list(langs),
+    opts = {**BASE_OPTS, "skip_download": True, "writesubtitles": not auto,
+            "writeautomaticsub": auto, "subtitleslangs": list(langs),
             "subtitlesformat": fmt,
             "outtmpl": os.path.join(tmp, "%(id)s.%(ext)s")}
     with YoutubeDL(opts) as ydl:

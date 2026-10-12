@@ -41,16 +41,28 @@ async def prepare(req: PrepareRequest, request: Request):
                + (f" {detail}" if detail and detail != "no-formats" else ""))
         raise HTTPException(status_code=400, detail={
             "code": "no-formats", "message": msg})
-    # Manual captions only: intersect requested langs with actual manual tracks.
+    # Intersect requested langs with actual tracks (manual + auto); the
+    # mux token records which ones are auto so the merge fetches correctly.
+    # The frontend prefixes auto selections as "auto:<lang>".
     manual_langs = {c.lang for c in Y.filter_manual_captions(info)}
-    embed = [lang for lang in (req.embedCaptions or []) if lang in manual_langs]
+    auto_langs = {c.lang for c in Y.list_auto_captions(info)}
+    embed: list[str] = []
+    auto_embed: list[str] = []
+    for raw in req.embedCaptions or []:
+        if raw.startswith("auto:"):
+            lang = raw[5:]
+            if lang in auto_langs:
+                embed.append(lang)
+                auto_embed.append(lang)
+        elif raw in manual_langs:
+            embed.append(raw)
     vid = (info or {}).get("id", "")
     title = (info or {}).get("title", "video")
     filename = f"{sanitize_filename(title)} [{vid}].{req.container}"
     payload = {"u": url, "v": streams["video_url"], "a": streams["audio_url"],
                "vd": streams["video_direct"], "ad": streams["audio_direct"],
                "c": req.container, "q": req.quality, "al": req.audioTrackLang,
-               "s": list(embed), "f": req.subFormat, "n": filename}
+               "s": list(embed), "sa": list(auto_embed), "f": req.subFormat, "n": filename}
     stream_token = T.mint("stream", payload)
     mux_token = T.mint("mux", payload) if (streams["merge_required"] or embed) else None
     warnings = []
@@ -61,6 +73,6 @@ async def prepare(req: PrepareRequest, request: Request):
         mergeRequired=bool(streams["merge_required"] or embed),
         sizeEstimate=streams["size_estimate"],
         streamToken=stream_token, muxToken=mux_token,
-        captions=sorted(manual_langs), warnings=warnings,
+        captions=sorted(manual_langs | auto_langs), warnings=warnings,
         videoUrl=streams["video_url"], audioUrl=streams["audio_url"],
     )

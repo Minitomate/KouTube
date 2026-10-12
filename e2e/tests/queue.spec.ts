@@ -57,9 +57,9 @@ test.describe('settings tab', () => {
     await app.goto();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Downloads' })).toBeVisible();
-    const split = page.getByRole('checkbox', { name: /separate audio/i });
+    const split = page.getByRole('switch', { name: /separate audio/i });
     await split.click();
-    await expect(split).toBeChecked();
+    await expect(split).toHaveAttribute('aria-checked', 'true');
     await page.getByRole('button', { name: /theme color berry/i }).click();
     const primary = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(),
@@ -67,7 +67,7 @@ test.describe('settings tab', () => {
     // Generated mood: Berry seed must resolve to a valid, non-default hex.
     expect(primary).toMatch(/^#[0-9a-f]{6}$/i);
     expect(primary.toLowerCase()).not.toBe('#6750a4');
-    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    await page.getByRole('button', { name: 'Home', exact: true }).click();
     await expect(page.getByLabel('YouTube URL')).toBeVisible();
   });
 
@@ -79,7 +79,7 @@ test.describe('settings tab', () => {
     await expect(page.getByLabel('4 concurrent downloads')).toBeVisible();
     await page.getByRole('button', { name: 'More concurrent downloads' }).click();
     await expect(page.getByLabel('5 concurrent downloads')).toBeVisible();
-    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    await page.getByRole('button', { name: 'Home', exact: true }).click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.getByLabel('5 concurrent downloads')).toBeVisible();
     await page.getByRole('button', { name: 'Fewer concurrent downloads' }).click();
@@ -94,9 +94,9 @@ test.describe('settings tab', () => {
     await expect(page.getByRole('heading', { name: 'Default download' })).toBeVisible();
     await page.getByLabel('Quality').selectOption('720');
     await page.getByLabel('Container').selectOption('mkv');
-    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    await page.getByRole('button', { name: 'Home', exact: true }).click();
     await app.inspectUrl(URL);
-    await page.getByRole('checkbox', { name: /show advanced/i }).check();
+    await app.advanced();
     await expect(page.getByLabel('Quality')).toHaveValue('720');
     await expect(page.getByLabel('Container')).toHaveValue('mkv');
   });
@@ -107,7 +107,7 @@ test.describe('settings tab', () => {
     await app.goto();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByLabel('Audio format').click();
-    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    await page.getByRole('button', { name: 'Home', exact: true }).click();
     await app.inspectUrl(URL);
     await expect(page.getByText(/Audio only — no captions/)).toBeVisible();
   });

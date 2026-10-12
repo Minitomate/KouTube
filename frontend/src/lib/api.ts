@@ -45,6 +45,8 @@ const BackendResolve = z.object({
   })).default([]),
   manualCaptions: z.array(z.object({ lang: z.string(), label: z.string() }))
     .default([]),
+  autoCaptions: z.array(z.object({ lang: z.string(), label: z.string() }))
+    .default([]),
   is_playlist: z.boolean().default(false),
   entries: z.array(z.object({
     videoId: z.string(), title: z.string().default(''),
@@ -89,9 +91,14 @@ export function normalizeMedia(raw: unknown): MediaInfo {
         .filter((t) => t.lang !== 'und')
         .map((t) => ({ id: t.lang, label: t.label, lang: t.lang, original: t.is_original ?? t.is_default ?? undefined })),
     ),
-    captions: b.manualCaptions.map((c) => ({
-      id: c.lang, label: c.label, lang: c.lang, manual: true,
-    })),
+    captions: [
+      ...b.manualCaptions.map((c) => ({
+        id: c.lang, label: c.label, lang: c.lang, manual: true,
+      })),
+      ...b.autoCaptions.map((c) => ({
+        id: `auto:${c.lang}`, label: c.label, lang: c.lang, manual: false,
+      })),
+    ].sort((a, b2) => a.lang.localeCompare(b2.lang) || Number(b2.manual) - Number(a.manual)),
     isPlaylist: b.is_playlist,
     playlistCount: b.entries.length || undefined,
     entries: b.entries.map((e) => ({ videoId: e.videoId, title: e.title })),

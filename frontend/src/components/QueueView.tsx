@@ -19,8 +19,8 @@ export default function QueueView({ onRemove, onClearFinished, onCancelAll }: Pr
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <h2 style={{ margin: 0 }}>
           {media?.isPlaylist
-            ? `Queue · playlist (${Math.min(media.playlistCount ?? queue.length, 10)}/10)`
-            : 'Downloads'}
+            ? `Queue · playlist (${Math.min(media.playlistCount ?? queue.length, 10)}/10) · ${active.length} active`
+            : `Downloads · ${active.length} active`}
         </h2>
         <div className="row">
           {finished.length > 0 && (

@@ -48,13 +48,13 @@ export function avatarThumb(url?: string): string | undefined {
   return url;
 }
 
-const PLAY_TRIANGLE = 'M8 5v14l11-7z';
 const VERIFIED_CHECK =
   'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z';
 
 /** Left column: YouTube-recommendation-style video + channel info. */
 export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const [avatarRaw, setAvatarRaw] = useState(false);
   const [thumbLoaded, setThumbLoaded] = useState(false);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
@@ -79,7 +79,17 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   const exact = fmtDate(media.uploadDate);
   const meta = [media.views != null ? `${fmtCount(media.views)} views` : '', rel]
     .filter(Boolean).join(' • ');
-  const avatar = !avatarFailed ? avatarThumb(media.avatarUrl) : undefined;
+  const metaFull = [media.views != null ? `${media.views.toLocaleString('en-US')} views` : '', exact || rel]
+    .filter(Boolean).join(' • ');
+  const tip = [media.views != null ? `${media.views.toLocaleString('en-US')} views` : '', exact]
+    .filter(Boolean).join(' • ');
+  const avatar = !avatarFailed ? (avatarRaw ? media.avatarUrl : avatarThumb(media.avatarUrl)) : undefined;
+  // New video: re-arm the avatar states (else a past failure sticks).
+  useEffect(() => {
+    setAvatarFailed(false);
+    setAvatarRaw(false);
+    setAvatarLoaded(false);
+  }, [media.videoId]);
   return (
     <div className="card">
       <div className="thumb-wrap">
@@ -93,15 +103,7 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
         )}
         <span className="pill-badge">{fmtDuration(media.duration)}</span>
       </div>
-      <h2>{media.title}</h2>
-      {meta && (
-        <div className="meta meta-row">
-          <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" fill="currentColor">
-            <path d={PLAY_TRIANGLE} />
-          </svg>
-          <span>{meta}</span>
-        </div>
-      )}
+      <h2 className="video-title">{media.title}</h2>
       {media.channel && (
         <div className="channel-row">
           {avatar ? (
@@ -110,9 +112,14 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
               {idle && (
               <img
                 className={`avatar${avatarLoaded ? '' : ' img-hidden'}`} src={avatar} alt=""
-                loading="lazy" decoding="async"
+                decoding="async" referrerPolicy="no-referrer"
                 onLoad={() => setAvatarLoaded(true)}
-                onError={() => setAvatarFailed(true)}
+                onError={() => {
+                  // Normalized (=s88) URL rejected: retry the raw URL once.
+                  const raw = media.avatarUrl;
+                  if (!avatarRaw && raw && avatar !== raw) setAvatarRaw(true);
+                  else setAvatarFailed(true);
+                }}
               />
               )}
             </>
@@ -134,24 +141,20 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
           </div>
         </div>
       )}
-      {media.description && (
-        <div>
-          <button
-            className="pill-btn text desc-toggle" aria-expanded={descOpen}
-            onClick={() => setDescOpen((v) => !v)}
-          >
-            {descOpen ? 'Show less' : '...more'}
-          </button>
-          {descOpen && (
-            <div className="desc-box">
-              <div className="desc-head">
-                {[media.views != null ? `${fmtCount(media.views)} views` : '', rel, exact && exact !== rel ? exact : '']
-                  .filter(Boolean).join(' • ')}
-              </div>
-              <p className="desc">{media.description.slice(0, 2000)}</p>
-            </div>
+      {(media.description || meta) && (
+        <button
+          type="button"
+          className={`desc-box${descOpen ? '' : ' collapsed'}`} aria-expanded={descOpen}
+          onClick={() => setDescOpen((v) => !v)}
+        >
+          {meta && <span className="desc-head" title={tip || undefined}>{descOpen && metaFull ? metaFull : meta}</span>}
+          {media.description && !descOpen && (
+            <span className="desc-snippet">{media.description.slice(0, 2000)} <span className="desc-more">...more</span></span>
           )}
-        </div>
+          {media.description && descOpen && (
+            <span className="desc">{media.description.slice(0, 2000)} <span className="desc-more">Show less</span></span>
+          )}
+        </button>
       )}
     </div>
   );

@@ -15,6 +15,9 @@
     { "lang": "en", "label": "en - English" },
     { "lang": "es", "label": "es - Spanish" }
   ],
+  "autoCaptions": [
+    { "lang": "en", "label": "en" }
+  ],
   "automatic_captions": {
     "en": [{ "ext": "vtt", "url": "https://example.test/auto/en.vtt" }]
   },

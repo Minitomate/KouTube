@@ -1,8 +1,11 @@
+import { useEffect } from 'react';
 import { useStore } from '../lib/store';
 import { loadSettings, saveSettings } from '../lib/settings';
 import { isTauri } from '../lib/desktop';
 import MultiDropdown from './MultiDropdown';
 import PreferenceFields from './PreferenceFields';
+import Switch from './Switch';
+import { displayLabel } from '../lib/lang';
 
 /** Right column: basic format + quality, advanced behind a persisted toggle. */
 export default function DownloadOptionsCard() {
@@ -11,7 +14,14 @@ export default function DownloadOptionsCard() {
   const heights = qualities.filter((q) => q !== 'best');
   const max = heights.length ? heights[heights.length - 1] : null;
   const tracks = media?.audioTracks ?? [];
-  const caps = media?.captions ?? [];
+  const caps = (media?.captions ?? []).filter((c) => c.manual);
+  const hasMedia = media != null && !media.isPlaylist;
+  const noCaps = hasMedia && caps.length === 0;
+
+  // Caption-less video while in captions mode: fall back to video.
+  useEffect(() => {
+    if (format === 'captions' && noCaps) set({ format: 'video' });
+  }, [format, noCaps, set]);
 
   async function toggleAdvanced() {
     const next = !showAdvanced;
@@ -32,30 +42,32 @@ export default function DownloadOptionsCard() {
         qualityHint={max ? ` (up to ${max}p)` : ''}
         desktop={isTauri()}
         advanced={showAdvanced}
+        captionsDisabled={noCaps}
       />
       {format === 'captions' && (
         <p className="meta" style={{ marginTop: 12 }}>
           Subtitle files only (.{captionsFormat}) — no video or audio is downloaded.
         </p>
       )}
-      {format !== 'captions' && showAdvanced && (
+      {(format === 'audio' || (format !== 'captions' && showAdvanced)) && (
         <MultiDropdown
           label="Audio tracks"
-          options={tracks.map((t) => ({ id: t.id, label: t.label, badge: t.original ? 'Original' : undefined }))}
+          options={tracks.map((t) => ({ id: t.id, label: displayLabel(t.id, t.label), badge: t.original ? 'Original' : undefined }))}
           selected={audioTracks}
           onToggle={toggleAudioTrack}
           emptyText="No dubbed tracks for this video."
           summaryNone="No audio"
         />
       )}
-      {format !== 'audio' && showAdvanced && (
+      {(format === 'captions' || (format !== 'audio' && showAdvanced)) && (
         <MultiDropdown
           label="Captions"
-          options={caps.map((c) => ({ id: c.id, label: c.label, badge: c.manual ? 'Manual-only' : undefined }))}
+          options={caps.map((c) => ({ id: c.id, label: displayLabel(c.id, c.label), badge: c.manual ? 'Manual' : 'Auto' }))}
           selected={captions}
           onToggle={toggleCaption}
           emptyText="No manual captions for this video."
           summaryNone="None"
+          disabled={noCaps}
         />
       )}
       {format === 'audio' && (
@@ -63,15 +75,9 @@ export default function DownloadOptionsCard() {
           Audio only — no captions are downloaded.
         </p>
       )}
-      <label className="check" style={{ marginTop: 12 }}>
-        <input
-          type="checkbox"
-          checked={showAdvanced}
-          onChange={() => void toggleAdvanced()}
-          aria-expanded={showAdvanced}
-        />
-        Show advanced settings
-      </label>
+      <div style={{ marginTop: 12 }}>
+        <Switch checked={showAdvanced} onChange={() => void toggleAdvanced()} label="Show advanced settings" />
+      </div>
     </div>
   );
 }

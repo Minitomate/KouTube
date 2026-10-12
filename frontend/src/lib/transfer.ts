@@ -132,8 +132,8 @@ export function srtFilename(title: string, videoId: string | undefined, lang: st
   return `${safeName(title)} [${videoId ?? 'video'}] [${lang}].${fmt}`;
 }
 
-export function subsUrl(pageUrl: string, lang: string, fmt = 'srt'): string {
-  return `/api/subs?url=${encodeURIComponent(pageUrl)}&lang=${encodeURIComponent(lang)}&fmt=${encodeURIComponent(fmt)}`;
+export function subsUrl(pageUrl: string, lang: string, fmt = 'srt', auto = false): string {
+  return `/api/subs?url=${encodeURIComponent(pageUrl)}&lang=${encodeURIComponent(lang)}&fmt=${encodeURIComponent(fmt)}${auto ? '&auto=1' : ''}`;
 }
 
 /** Anchor download of an in-memory blob. */

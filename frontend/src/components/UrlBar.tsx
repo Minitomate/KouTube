@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import { isTauri, desktopResolve, ensureDesktopTools, inspectFailedMessage, readClipboardText } from '../lib/desktop';
 import type { MediaInfo } from '../lib/api';
+import { Icon, PATHS } from './icons';
 
 /** Default selection: the video's original language track (marker, else first). */
 export function defaultAudio(media: MediaInfo): string[] {
@@ -83,9 +84,15 @@ export default function UrlBar() {
     }
   }
 
+  function clear() {
+    setDraft('');
+    setError('');
+    document.getElementById('url')?.focus();
+  }
+
   return (
-    <div className="card">
-      <h2>1 · Paste link</h2>
+    <div className="card urlbar-card">
+      <h2>Paste link</h2>
       <div className="urlbar">
         <label className="sr" htmlFor="url">YouTube URL</label>
         <input
@@ -95,16 +102,21 @@ export default function UrlBar() {
           onChange={(e) => setDraft(e.target.value)}
           inputMode="url"
         />
-        <button className="pill-btn tonal" onClick={paste} aria-label="Paste from clipboard">
-          Paste
+        <button className="pill-btn tonal icon-btn" onClick={clear} disabled={!draft} aria-label="Clear link" title="Clear link">
+          <Icon d={PATHS.clear} />
+        </button>
+        <button className="pill-btn tonal icon-btn" onClick={paste} aria-label="Paste from clipboard" title="Paste from clipboard">
+          <Icon d={PATHS.paste} />
         </button>
         <button
-          className="pill-btn filled"
+          className="pill-btn filled icon-btn"
           onClick={() => inspect()}
           disabled={loading}
           aria-label="Inspect video"
+          title="Inspect video"
+          aria-busy={loading}
         >
-          {loading ? '…' : 'Inspect'}
+          {loading ? <span className="spinner" aria-hidden="true" /> : <Icon d={PATHS.inspect} />}
         </button>
       </div>
       <div className="field-error" role="alert">{error}</div>

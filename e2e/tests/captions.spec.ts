@@ -5,7 +5,8 @@ import manualOnly from '../fixtures/resolve-manual-only.json' with { type: 'json
 const URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
 async function openCaptions(page: Page) {
-  await page.getByRole('checkbox', { name: /show advanced/i }).check();
+  const adv = page.getByRole('switch', { name: /show advanced/i });
+  if ((await adv.getAttribute('aria-checked')) !== 'true') await adv.click();
   await page.locator('[aria-labelledby="md-captions"]').click();
 }
 
@@ -19,18 +20,19 @@ test.describe('captions (manual-only dropdown)', () => {
     await expect(page.locator('[aria-labelledby="md-captions"]')).toContainText('None');
     await expect(page.getByRole('option', { name: /en - English/ })).toBeVisible();
     await expect(page.getByRole('option', { name: /es - Spanish/ })).toBeVisible();
-    await expect(page.getByText('Manual-only').first()).toBeVisible();
+    await expect(page.locator('.md-panel').getByText('Manual').first()).toBeVisible();
   });
 
-  test('auto captions never surface', async ({ page }) => {
+  test('auto tracks never surface', async ({ page }) => {
     await page.route('**/api/resolve', (r) => r.fulfill({ json: manualOnly }));
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await openCaptions(page);
-    // Fixture automatic_captions.en must be ignored: only 2 options.
+    await app.pickFormat('captions');
+    await page.locator('[aria-labelledby="md-captions"]').click();
+    // Fixture autoCaptions.en must be ignored: only the 2 manual options.
     await expect(page.getByRole('listbox', { name: 'Captions' }).getByRole('option')).toHaveCount(2);
-    await expect(page.getByText(/auto-generated/i)).toHaveCount(0);
+    await expect(page.getByText(/auto/i)).toHaveCount(0);
   });
 
   test('prepare carries embedCaptions', async ({ page }) => {
@@ -57,15 +59,16 @@ test.describe('captions (manual-only dropdown)', () => {
     expect(posted).toMatchObject({ embedCaptions: expect.arrayContaining(['en', 'es']) });
   });
 
-  test('empty state when no captions', async ({ page }) => {
+  test('disabled state when no captions', async ({ page }) => {
     await page.route('**/api/resolve', (r) =>
-      r.fulfill({ json: { ...manualOnly, manualCaptions: [] } }),
+      r.fulfill({ json: { ...manualOnly, manualCaptions: [], autoCaptions: [] } }),
     );
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await openCaptions(page);
-    await expect(page.getByText('No manual captions for this video.')).toBeVisible();
+    await app.advanced();
+    await expect(page.getByRole('button', { name: 'Captions format' })).toBeDisabled();
+    await expect(page.locator('[aria-labelledby="md-captions"]')).toBeDisabled();
   });
 
   test('keyboard: Enter toggles, Escape closes', async ({ page }) => {

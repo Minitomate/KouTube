@@ -2,6 +2,10 @@ import {
   AUDIO_CODECS, AUDIO_CONTAINERS, AUDIO_QUALITIES,
   type AudioContainer, type AudioQuality, type Codec, type Container, type Format,
 } from '../lib/store';
+import { Icon, PATHS } from './icons';
+
+const FORMAT_ICON = { video: PATHS.video, audio: PATHS.audio, captions: PATHS.captions } as const;
+const FORMAT_LABEL = { video: 'Video', audio: 'Audio', captions: 'Captions' } as const;
 
 /** Full download-preference fieldset, controlled. The card binds it to the
  * store (advanced groups gated by the toggle); Settings binds it to the
@@ -26,9 +30,11 @@ interface Props {
   /** Audio encodes are desktop-only; web shows an MP3 note instead. */
   desktop: boolean;
   advanced: boolean;
+  /** Grey out the Captions mode when the inspected video has none. */
+  captionsDisabled?: boolean;
 }
 
-export default function PreferenceFields({ value, onChange, qualities, qualityHint, desktop, advanced }: Props) {
+export default function PreferenceFields({ value, onChange, qualities, qualityHint, desktop, advanced, captionsDisabled }: Props) {
   const { format } = value;
   const codecs = AUDIO_CODECS[value.audioContainer];
   const showQuality =
@@ -44,16 +50,22 @@ export default function PreferenceFields({ value, onChange, qualities, qualityHi
   return (
     <>
       <div className="segmented" role="group" aria-label="Format">
-        {(['video', 'audio', 'captions'] as const).map((f) => (
-          <button
-            key={f}
-            aria-pressed={format === f}
-            aria-label={f === 'video' ? 'Video format' : f === 'audio' ? 'Audio format' : 'Captions format'}
-            onClick={() => patch({ format: f })}
-          >
-            {f === 'video' ? 'Video' : f === 'audio' ? 'Audio' : 'Captions'}
-          </button>
-        ))}
+        {(['video', 'audio', 'captions'] as const).map((f) => {
+          const disabled = f === 'captions' && captionsDisabled;
+          return (
+            <button
+              key={f}
+              aria-pressed={format === f}
+              aria-label={f === 'video' ? 'Video format' : f === 'audio' ? 'Audio format' : 'Captions format'}
+              title={disabled ? 'No manual captions for this video' : undefined}
+              disabled={disabled}
+              onClick={() => patch({ format: f })}
+            >
+              <Icon d={FORMAT_ICON[f]} size={18} />
+              {FORMAT_LABEL[f]}
+            </button>
+          );
+        })}
       </div>
       {format === 'video' && (
         <>
