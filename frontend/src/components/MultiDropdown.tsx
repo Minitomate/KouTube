@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocale } from '../lib/store';
 
 export interface MultiOption {
   id: string;
@@ -14,10 +15,13 @@ interface Props {
   emptyText: string;
   summaryNone: string;
   disabled?: boolean;
+  /** Tooltip for the disabled (caption-less) state. */
+  disabledHint?: string;
 }
 
 /** Shared multi-select dropdown (audio tracks, captions). */
-export default function MultiDropdown({ label, options, selected, onToggle, emptyText, summaryNone, disabled }: Props) {
+export default function MultiDropdown({ label, options, selected, onToggle, emptyText, summaryNone, disabled, disabledHint }: Props) {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const buttonId = `md-${label.replace(/\W+/g, '-').toLowerCase()}`;
@@ -40,7 +44,7 @@ export default function MultiDropdown({ label, options, selected, onToggle, empt
     ? summaryNone
     : selected.length === 1
       ? (options.find((o) => o.id === selected[0])?.label ?? selected[0])
-      : `${selected.length} selected`;
+      : t('multi.selected', { n: selected.length });
   return (
     <div className="field" ref={boxRef}>
       <span id={buttonId}>{label}</span>
@@ -51,7 +55,7 @@ export default function MultiDropdown({ label, options, selected, onToggle, empt
         aria-expanded={open}
         aria-labelledby={buttonId}
         disabled={disabled}
-        title={disabled ? 'No manual captions for this video' : undefined}
+        title={disabled ? disabledHint : undefined}
         onClick={() => setOpen((v) => !v)}
       >
         {summary}

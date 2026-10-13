@@ -1,11 +1,11 @@
 import {
-  AUDIO_CODECS, AUDIO_CONTAINERS, AUDIO_QUALITIES,
+  AUDIO_CODECS, AUDIO_CONTAINERS, AUDIO_QUALITIES, useLocale,
   type AudioContainer, type AudioQuality, type Codec, type Container, type Format,
 } from '../lib/store';
 import { Icon, PATHS } from './icons';
+import SingleDropdown from './SingleDropdown';
 
 const FORMAT_ICON = { video: PATHS.video, audio: PATHS.audio, captions: PATHS.captions } as const;
-const FORMAT_LABEL = { video: 'Video', audio: 'Audio', captions: 'Captions' } as const;
 
 /** Full download-preference fieldset, controlled. The card binds it to the
  * store (advanced groups gated by the toggle); Settings binds it to the
@@ -35,6 +35,7 @@ interface Props {
 }
 
 export default function PreferenceFields({ value, onChange, qualities, qualityHint, desktop, advanced, captionsDisabled }: Props) {
+  const { t } = useLocale();
   const { format } = value;
   const codecs = AUDIO_CODECS[value.audioContainer];
   const showQuality =
@@ -49,134 +50,90 @@ export default function PreferenceFields({ value, onChange, qualities, qualityHi
   }
   return (
     <>
-      <div className="segmented" role="group" aria-label="Format">
+      <div className="segmented" role="group" aria-label={t('prefs.format')}>
         {(['video', 'audio', 'captions'] as const).map((f) => {
           const disabled = f === 'captions' && captionsDisabled;
           return (
             <button
               key={f}
               aria-pressed={format === f}
-              aria-label={f === 'video' ? 'Video format' : f === 'audio' ? 'Audio format' : 'Captions format'}
-              title={disabled ? 'No manual captions for this video' : undefined}
+              aria-label={f === 'video' ? t('prefs.videoFormat') : f === 'audio' ? t('prefs.audioFormat') : t('prefs.captionsFormat')}
+              title={disabled ? t('options.noCapsHint') : undefined}
               disabled={disabled}
               onClick={() => patch({ format: f })}
             >
               <Icon d={FORMAT_ICON[f]} size={18} />
-              {FORMAT_LABEL[f]}
+              {f === 'video' ? t('prefs.video') : f === 'audio' ? t('prefs.audio') : t('prefs.captions')}
             </button>
           );
         })}
       </div>
       {format === 'video' && (
         <>
-          <label className="field">
-            <span>Quality{qualityHint ?? ''}</span>
-            <select
-              aria-label="Quality"
-              className="select-pill"
-              value={value.quality}
-              onChange={(e) => patch({ quality: e.target.value })}
-            >
-              {qualities.map((q) => (
-                <option key={q} value={q}>{q === 'best' ? 'Best' : `${q}p`}</option>
-              ))}
-            </select>
-          </label>
+          <SingleDropdown
+            label={`${t('prefs.quality')}${qualityHint ?? ''}`}
+            options={qualities.map((q) => ({ id: q, label: q === 'best' ? t('prefs.best') : `${q}p` }))}
+            value={value.quality}
+            onChange={(quality) => patch({ quality })}
+          />
           {advanced && (
             <div className="field-row">
-              <label className="field">
-                <span>Container</span>
-                <select
-                  aria-label="Container"
-                  className="select-pill"
-                  value={value.container}
-                  onChange={(e) => patch({ container: e.target.value as Container })}
-                >
-                  <option value="mp4">MP4</option>
-                  <option value="webm">WebM</option>
-                  <option value="mkv">MKV</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Codec</span>
-                <select
-                  aria-label="Codec"
-                  className="select-pill"
-                  value={value.codec}
-                  onChange={(e) => patch({ codec: e.target.value as Codec })}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="avc">AVC (H.264)</option>
-                  <option value="hevc">HEVC (H.265)</option>
-                  <option value="vp9">VP9</option>
-                  <option value="av1">AV1</option>
-                </select>
-              </label>
+              <SingleDropdown
+                label={t('prefs.container')}
+                options={(['mp4', 'webm', 'mkv'] as const).map((c) => ({ id: c, label: c.toUpperCase() }))}
+                value={value.container}
+                onChange={(container) => patch({ container: container as Container })}
+              />
+              <SingleDropdown
+                label={t('prefs.codec')}
+                options={[
+                  { id: 'auto', label: t('prefs.auto') },
+                  { id: 'avc', label: 'AVC (H.264)' },
+                  { id: 'hevc', label: 'HEVC (H.265)' },
+                  { id: 'vp9', label: 'VP9' },
+                  { id: 'av1', label: 'AV1' },
+                ]}
+                value={value.codec}
+                onChange={(codec) => patch({ codec: codec as Codec })}
+              />
             </div>
           )}
         </>
       )}
       {format === 'audio' && advanced && desktop && (
         <div className="field-row">
-          <label className="field">
-            <span>Container</span>
-            <select
-              aria-label="Audio container"
-              className="select-pill"
-              value={value.audioContainer}
-              onChange={(e) => patch({ audioContainer: e.target.value as AudioContainer })}
-            >
-              {AUDIO_CONTAINERS.map((c) => (
-                <option key={c} value={c}>{c.toUpperCase()}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Codec</span>
-            <select
-              aria-label="Audio codec"
-              className="select-pill"
-              value={value.audioCodec}
-              onChange={(e) => patch({ audioCodec: e.target.value })}
-            >
-              {codecs.map((c) => (
-                <option key={c.id} value={c.id}>{c.label}</option>
-              ))}
-            </select>
-          </label>
+          <SingleDropdown
+            label={t('prefs.container')}
+            options={AUDIO_CONTAINERS.map((c) => ({ id: c, label: c.toUpperCase() }))}
+            value={value.audioContainer}
+            onChange={(audioContainer) => patch({ audioContainer: audioContainer as AudioContainer })}
+          />
+          <SingleDropdown
+            label={t('prefs.codec')}
+            options={codecs.map((c) => ({ id: c.id, label: c.label }))}
+            value={value.audioCodec}
+            onChange={(audioCodec) => patch({ audioCodec })}
+          />
           {showQuality && (
-            <label className="field">
-              <span>Quality</span>
-              <select
-                aria-label="Audio quality"
-                className="select-pill"
-                value={value.audioQuality}
-                onChange={(e) => patch({ audioQuality: e.target.value as AudioQuality })}
-              >
-                {AUDIO_QUALITIES.map((q) => (
-                  <option key={q.id} value={q.id}>{q.label}</option>
-                ))}
-              </select>
-            </label>
+            <SingleDropdown
+              label={t('prefs.quality')}
+              options={AUDIO_QUALITIES.map((q) => ({ id: q.id, label: q.id === 'best' ? t('prefs.best') : q.label }))}
+              value={value.audioQuality}
+              onChange={(audioQuality) => patch({ audioQuality: audioQuality as AudioQuality })}
+            />
           )}
         </div>
       )}
       {format === 'audio' && !desktop && (
-        <p className="meta" style={{ marginTop: 12 }}>Audio downloads as MP3 on web.</p>
+        <p className="meta" style={{ marginTop: 12 }}>{t('prefs.mp3web')}</p>
       )}
       {format !== 'audio' && advanced && (
-        <label className="field">
-          <span>Captions format</span>
-          <select
-            aria-label="Captions file format"
-            className="select-pill"
-            value={value.captionsFormat}
-            onChange={(e) => patch({ captionsFormat: e.target.value as 'srt' | 'vtt' })}
-          >
-            <option value="srt">SRT</option>
-            <option value="vtt">VTT</option>
-          </select>
-        </label>
+        <SingleDropdown
+          label={t('prefs.capsFileLabel')}
+          options={[{ id: 'srt', label: 'SRT' }, { id: 'vtt', label: 'VTT' }]}
+          value={value.captionsFormat}
+          onChange={(captionsFormat) => patch({ captionsFormat: captionsFormat as 'srt' | 'vtt' })}
+        />
       )}
     </>
   );

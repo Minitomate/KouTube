@@ -26,6 +26,7 @@ export const SettingsSchema = z.object({
   outDir: z.string().nullable().default(null),
   splitKinds: z.boolean().default(false),
   theme: z.enum(['light', 'dark', 'auto']).default('auto'),
+  locale: z.enum(['auto', 'en', 'es']).default('auto'),
   seed: z.string().default('#6750A4'),
   variant: z.enum(['tonal-spot', 'vibrant', 'expressive']).default('tonal-spot'),
   maxConcurrent: z.number().int().min(1).max(8).default(4),

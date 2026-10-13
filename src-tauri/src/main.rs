@@ -87,6 +87,13 @@ async fn get_recent_logs() -> Vec<String> {
     jobs::recent_logs().await
 }
 
+/// Save user-picked text (debug log): the path always comes from the save
+/// dialog, so the destination is user-consented by construction.
+#[tauri::command]
+async fn save_text_file(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
 /// Dev-only: open the webview devtools (debug context-menu entry).
 /// Always registered; release builds refuse, so there is zero prod surface.
 #[tauri::command]
@@ -123,6 +130,7 @@ fn main() {
             trash_file,
             existing_outputs,
             get_recent_logs,
+            save_text_file,
             media::play_file,
             open_devtools
         ])

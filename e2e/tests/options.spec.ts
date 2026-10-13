@@ -45,8 +45,8 @@ test.describe('container and codec options', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.advanced();
-    await page.getByLabel('Container').selectOption('mkv');
-    await page.getByLabel('Codec').selectOption('avc');
+    await app.pickSingle('container', 'MKV');
+    await app.pickSingle('codec', /avc/i);
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
     expect(posted).toMatchObject({ container: 'mkv', codec: 'avc' });
@@ -176,9 +176,9 @@ test.describe('container and codec options', () => {
     await app.inspectUrl(URL);
     await app.pickFormat('audio');
     // Encode selects are desktop-only; web relays MP3.
-    await expect(page.getByLabel('Audio container')).toHaveCount(0);
-    await expect(page.getByLabel('Audio codec')).toHaveCount(0);
-    await expect(page.getByLabel('Audio quality')).toHaveCount(0);
+    await expect(page.locator('[aria-labelledby="md-container"]')).toHaveCount(0);
+    await expect(page.locator('[aria-labelledby="md-codec"]')).toHaveCount(0);
+    await expect(page.locator('[aria-labelledby^="md-quality"]')).toHaveCount(0);
     await expect(page.getByText(/Audio downloads as MP3 on web/)).toBeVisible();
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
@@ -268,12 +268,12 @@ test.describe('advanced settings toggle', () => {
     const app = new KouTubePage(page);
     await app.goto();
     await app.inspectUrl(URL);
-    await expect(page.getByLabel('Container')).toHaveCount(0);
+    await expect(page.locator('[aria-labelledby="md-container"]')).toHaveCount(0);
     await page.getByRole('switch', { name: /show advanced/i }).click();
-    await expect(page.getByLabel('Container')).toBeVisible();
+    await expect(page.locator('[aria-labelledby="md-container"]')).toBeVisible();
     await page.reload();
     await expect(page.getByRole('switch', { name: /show advanced/i })).toHaveAttribute('aria-checked', 'true');
-    await expect(page.getByLabel('Container')).toBeVisible();
+    await expect(page.locator('[aria-labelledby="md-container"]')).toBeVisible();
   });
 
   test('picks survive collapsing the toggle', async ({ page }) => {

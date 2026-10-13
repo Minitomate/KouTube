@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { MediaInfo } from '../lib/api';
+import { localeTag, t, type Locale } from '../lib/i18n';
+import { useLocale } from '../lib/store';
 
 export function fmtCount(n?: number | null): string {
   if (n === undefined || n === null) return '';
@@ -20,8 +22,8 @@ export function fmtDate(yyyymmdd?: string): string {
   return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
 }
 
-/** YouTube-style relative time ("2 hours ago"); falls back to the date. */
-export function fmtRelative(timestampSec?: number, nowMs: number = Date.now()): string {
+/** YouTube-style relative time ("2 hours ago" / "hace 2 horas"); falls back to the date. */
+export function fmtRelative(timestampSec?: number, nowMs: number = Date.now(), locale: Locale = 'en'): string {
   if (!timestampSec) return '';
   const diff = Math.max(0, nowMs / 1000 - timestampSec);
   const minute = 60;
@@ -29,15 +31,16 @@ export function fmtRelative(timestampSec?: number, nowMs: number = Date.now()): 
   const day = 86400;
   const month = 30 * day;
   const year = 365 * day;
-  const qty = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+  const qty = (n: number, one: 'rel.minuteOne' | 'rel.hourOne' | 'rel.dayOne' | 'rel.monthOne' | 'rel.yearOne', many: 'rel.minuteMany' | 'rel.hourMany' | 'rel.dayMany' | 'rel.monthMany' | 'rel.yearMany') =>
+    t(locale, n === 1 ? one : many, { n });
   if (diff < hour) {
     const m = Math.max(1, Math.floor(diff / minute));
-    return qty(m, 'minute');
+    return qty(m, 'rel.minuteOne', 'rel.minuteMany');
   }
-  if (diff < day) return qty(Math.floor(diff / hour), 'hour');
-  if (diff < month) return qty(Math.floor(diff / day), 'day');
-  if (diff < year) return qty(Math.floor(diff / month), 'month');
-  return qty(Math.floor(diff / year), 'year');
+  if (diff < day) return qty(Math.floor(diff / hour), 'rel.hourOne', 'rel.hourMany');
+  if (diff < month) return qty(Math.floor(diff / day), 'rel.dayOne', 'rel.dayMany');
+  if (diff < year) return qty(Math.floor(diff / month), 'rel.monthOne', 'rel.monthMany');
+  return qty(Math.floor(diff / year), 'rel.yearOne', 'rel.yearMany');
 }
 
 /** Request a small avatar: normalize YouTube sizing to =s88. */
@@ -53,6 +56,7 @@ const VERIFIED_CHECK =
 
 /** Left column: YouTube-recommendation-style video + channel info. */
 export default function VideoInfoCard({ media }: { media: MediaInfo }) {
+  const { lang, t: tx } = useLocale();
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [avatarRaw, setAvatarRaw] = useState(false);
   const [thumbLoaded, setThumbLoaded] = useState(false);
@@ -75,13 +79,20 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
     return () => clearTimeout(t);
   }, []);
   const initial = (media.channel ?? media.title).trim().charAt(0).toUpperCase() || '▶';
-  const rel = fmtRelative(media.timestamp) || (media.uploadDate ? fmtDate(media.uploadDate) : '');
+  const tag = localeTag(lang);
+  const viewsShort = media.views != null
+    ? tx(media.views === 1 ? 'video.viewsOne' : 'video.viewsMany', { n: fmtCount(media.views) })
+    : '';
+  const viewsFull = media.views != null
+    ? tx(media.views === 1 ? 'video.viewsOne' : 'video.viewsMany', { n: media.views.toLocaleString(tag) })
+    : '';
+  const rel = fmtRelative(media.timestamp, Date.now(), lang) || (media.uploadDate ? fmtDate(media.uploadDate) : '');
   const exact = fmtDate(media.uploadDate);
-  const meta = [media.views != null ? `${fmtCount(media.views)} views` : '', rel]
+  const meta = [viewsShort, rel]
     .filter(Boolean).join(' • ');
-  const metaFull = [media.views != null ? `${media.views.toLocaleString('en-US')} views` : '', exact || rel]
+  const metaFull = [viewsFull, exact || rel]
     .filter(Boolean).join(' • ');
-  const tip = [media.views != null ? `${media.views.toLocaleString('en-US')} views` : '', exact]
+  const tip = [viewsFull, exact]
     .filter(Boolean).join(' • ');
   const avatar = !avatarFailed ? (avatarRaw ? media.avatarUrl : avatarThumb(media.avatarUrl)) : undefined;
   // New video: re-arm the avatar states (else a past failure sticks).
@@ -130,13 +141,13 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
             <strong>
               {media.channel}
               {media.channelVerified && (
-                <svg viewBox="0 0 24 24" width="14" height="14" aria-label="Verified channel" role="img" className="verified-mark">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-label={tx('video.verified')} role="img" className="verified-mark">
                   <path d={VERIFIED_CHECK} fill="currentColor" />
                 </svg>
               )}
             </strong>
             {media.subscribers != null && (
-              <div className="meta">{fmtCount(media.subscribers)} subscribers</div>
+              <div className="meta">{tx(media.subscribers === 1 ? 'video.subsOne' : 'video.subsMany', { n: fmtCount(media.subscribers) })}</div>
             )}
           </div>
         </div>
@@ -149,10 +160,10 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
         >
           {meta && <span className="desc-head" title={tip || undefined}>{descOpen && metaFull ? metaFull : meta}</span>}
           {media.description && !descOpen && (
-            <span className="desc-snippet">{media.description.slice(0, 2000)} <span className="desc-more">...more</span></span>
+            <span className="desc-snippet">{media.description.slice(0, 2000)} <span className="desc-more">{tx('video.more')}</span></span>
           )}
           {media.description && descOpen && (
-            <span className="desc">{media.description.slice(0, 2000)} <span className="desc-more">Show less</span></span>
+            <span className="desc">{media.description.slice(0, 2000)} <span className="desc-more">{tx('video.less')}</span></span>
           )}
         </button>
       )}

@@ -97,6 +97,7 @@ describe('settings store', () => {
     expect(DEFAULTS.windowSize).toBeNull();
     expect(DEFAULTS.downloadDefaults.format).toBe('video');
     expect(DEFAULTS.maxConcurrent).toBe(4);
+    expect(DEFAULTS.locale).toBe('auto');
   });
 
   it('defaults the update settings on old stores', async () => {

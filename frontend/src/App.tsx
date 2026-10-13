@@ -4,8 +4,9 @@ import Home, { ThemeToggle } from './routes/Home';
 import Settings from './routes/Settings';
 import LogoIcon from './components/LogoIcon';
 import { Icon, PATHS } from './components/icons';
-import { useStore, resolveTheme, applyDownloadDefaults } from './lib/store';
+import { useStore, resolveTheme, applyDownloadDefaults, useLocale } from './lib/store';
 import { loadSettings, applyTheme } from './lib/settings';
+import { t } from './lib/i18n';
 import { isTauri } from './lib/desktop';
 import { runUpdateCheck, runUpdateDownload, dismissPendingUpdate, relaunchApp, shouldAutoCheck, formatReleaseDate } from './lib/updater';
 import ContextMenu from './components/ContextMenu';
@@ -13,10 +14,11 @@ import ContextMenu from './components/ContextMenu';
 const qc = new QueryClient();
 
 function Shell() {
-  const { view, theme, seed, variant, set, updateStatus, updateVersion, updatePubDate, updateProgress, updateDismissed } = useStore();
+  const { view, theme, seed, variant, locale, set, updateStatus, updateVersion, updatePubDate, updateProgress, updateDismissed } = useStore();
+  const { lang, t: tx } = useLocale();
   useEffect(() => {
     loadSettings().then(({ settings, reset }) => {
-      set({ theme: settings.theme, seed: settings.seed, variant: settings.variant });
+      set({ theme: settings.theme, seed: settings.seed, variant: settings.variant, locale: settings.locale });
       set({ showAdvanced: settings.showAdvanced });
       set(applyDownloadDefaults(settings.downloadDefaults));
       if (reset) console.warn('settings reset to defaults');
@@ -30,7 +32,7 @@ function Shell() {
       try {
         const { settings } = await loadSettings();
         if (!shouldAutoCheck(settings.autoUpdateCheck, settings.lastUpdateCheck)) return;
-        await runUpdateCheck();
+        await runUpdateCheck(lang);
       } catch { /* next launch retries */ }
     })();
   }, []);
@@ -41,6 +43,18 @@ function Shell() {
     mq.addEventListener?.('change', apply);
     return () => mq.removeEventListener?.('change', apply);
   }, [theme, seed, variant]);
+  // Locale follows the OS/browser while set to System: <html lang>, the tab
+  // title and every string re-resolve live on languagechange.
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.title = t(lang, 'app.title');
+  }, [lang]);
+  useEffect(() => {
+    if (locale !== 'auto') return;
+    const onLang = () => set({ localeTick: useStore.getState().localeTick + 1 });
+    window.addEventListener('languagechange', onLang);
+    return () => window.removeEventListener('languagechange', onLang);
+  }, [locale, set]);
   async function dismissBanner() {
     set({ updateDismissed: true });
     await dismissPendingUpdate();
@@ -51,11 +65,11 @@ function Shell() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand" aria-label="KouTube"><LogoIcon />ou<span>Tube</span></div>
-        <nav className="row" aria-label="Sections">
-          <button className="pill-btn tonal icon-btn" aria-pressed={view === 'home'} aria-label="Home" title="Home" onClick={() => set({ view: 'home' })}>
+        <nav className="row" aria-label={tx('nav.sections')}>
+          <button className="pill-btn tonal icon-btn" aria-pressed={view === 'home'} aria-label={tx('nav.home')} title={tx('nav.home')} onClick={() => set({ view: 'home' })}>
             <Icon d={PATHS.home} />
           </button>
-          <button className="pill-btn tonal icon-btn" aria-pressed={view === 'settings'} aria-label="Settings" title="Settings" onClick={() => set({ view: 'settings' })}>
+          <button className="pill-btn tonal icon-btn" aria-pressed={view === 'settings'} aria-label={tx('nav.settings')} title={tx('nav.settings')} onClick={() => set({ view: 'settings' })}>
             <Icon d={PATHS.settings} />
           </button>
           <ThemeToggle />
@@ -66,25 +80,25 @@ function Shell() {
           <div>
             <strong>
               {updateStatus === 'ready'
-                ? `KouTube ${updateVersion} is ready — restart to apply it.`
-                : `KouTube ${updateVersion} is available.`}
+                ? tx('update.ready', { v: updateVersion ?? '' })
+                : tx('update.available', { v: updateVersion ?? '' })}
             </strong>
-            {updateStatus !== 'downloading' && formatReleaseDate(updatePubDate) && (
-              <div className="meta">Released {formatReleaseDate(updatePubDate)}.</div>
+            {updateStatus !== 'downloading' && formatReleaseDate(updatePubDate, lang) && (
+              <div className="meta">{tx('update.released', { date: formatReleaseDate(updatePubDate, lang) ?? '' })}</div>
             )}
             {updateStatus === 'downloading' && (
               updateProgress == null
-                ? <div className="meta">Downloading…</div>
+                ? <div className="meta">{tx('update.downloading')}</div>
                 : <div className="progress-pill" role="progressbar" aria-valuenow={updateProgress} aria-valuemin={0} aria-valuemax={100}><div style={{ width: `${updateProgress}%` }} /></div>
             )}
           </div>
           <div className="row" style={{ marginTop: 8 }}>
-            {updateStatus === 'available' && <button className="pill-btn filled" onClick={() => void runUpdateDownload()}>Update</button>}
+            {updateStatus === 'available' && <button className="pill-btn filled" onClick={() => void runUpdateDownload(lang)}>{tx('update.update')}</button>}
             {updateStatus === 'downloading' && (
-              <button className="pill-btn filled" disabled>{updateProgress == null ? 'Downloading…' : `${updateProgress}%`}</button>
+              <button className="pill-btn filled" disabled>{updateProgress == null ? tx('update.downloading') : `${updateProgress}%`}</button>
             )}
-            {updateStatus === 'ready' && <button className="pill-btn filled" onClick={() => void relaunchApp()}>Restart now</button>}
-            <button className="pill-btn text" onClick={() => void dismissBanner()}>Later</button>
+            {updateStatus === 'ready' && <button className="pill-btn filled" onClick={() => void relaunchApp()}>{tx('update.restart')}</button>}
+            <button className="pill-btn text" onClick={() => void dismissBanner()}>{tx('update.later')}</button>
           </div>
         </div>
       )}

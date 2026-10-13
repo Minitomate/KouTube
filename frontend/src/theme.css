@@ -128,9 +128,10 @@ body {
 
 .select-pill {
   border-radius: var(--radius-pill); min-height: 48px; padding: 0 18px;
-  border: 1px solid var(--outline); background: var(--surface); color: var(--on-surface); font-size: 14px;
+  border: 1px solid transparent; background: var(--secondary-container);
+  color: var(--on-secondary-container); font-size: 14px; cursor: pointer;
 }
-.select-pill option { background: var(--surface); color: var(--on-surface); }
+.select-pill:hover { background-color: var(--primary-container); color: var(--on-primary-container); }
 .desc-box {
   display: block; width: 100%; text-align: left; cursor: pointer;
   margin-top: 10px; background: var(--surface-container-high);
@@ -202,6 +203,7 @@ fieldset.field { border: 0; padding: 0; }
   body, .card, .urlbar input, .select-pill { transition: none; }
   .pill-btn:active:not(:disabled), .chip:active, .segmented button:active { transform: none; }
   .md-panel { animation: none; }
+  .md-button::after { transition: none; }
   .spinner { animation: none; }
 }
 
@@ -222,16 +224,26 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 @media (max-width: 420px) {
   .field-row { grid-template-columns: 1fr; }
 }
-.md-button { width: 100%; justify-content: flex-start; }
+.md-button { width: 100%; display: inline-flex; align-items: center; gap: 8px; justify-content: flex-start; }
+/* Chevron affordance: rotates open, pure CSS so no JSX changes. */
+.md-button::after {
+  content: ''; margin-left: auto; flex: none; opacity: 0.7;
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-top: 6px solid currentColor; transition: transform 0.15s ease;
+}
+.md-button[aria-expanded='true'] { background: var(--primary-container); color: var(--on-primary-container); }
+.md-button[aria-expanded='true']::after { transform: rotate(180deg); }
 .md-panel {
-  margin-top: 6px; background: var(--surface); border: 1px solid var(--outline-variant);
-  border-radius: 16px; padding: 6px; max-height: 220px; overflow-y: auto;
+  margin-top: 6px; background: var(--surface-container-low);
+  border: 1px solid transparent; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  border-radius: 20px; padding: 6px; max-height: 220px; overflow-y: auto;
 }
 .md-option {
   display: flex; gap: 8px; align-items: center; padding: 10px 12px;
-  border-radius: 12px; cursor: pointer; font-size: 14px;
+  border-radius: 999px; cursor: pointer; font-size: 14px;
 }
-.md-option:hover, .md-option:focus-visible { background: var(--surface-container-high); outline: none; }
+.md-option:hover, .md-option:focus-visible { background: var(--secondary-container); color: var(--on-secondary-container); outline: none; }
+.md-option[aria-selected='true'] { background: var(--secondary-container); color: var(--on-secondary-container); font-weight: 600; }
 .md-option .badge { margin-left: auto; }
 
 .modal-backdrop {
@@ -304,7 +316,7 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 
 /* Visible keyboard focus for new controls. */
 .icon-btn:focus-visible, .switch:focus-visible, .stepper-num button:focus-visible,
-.segmented button:focus-visible, .md-button:focus-visible {
+.segmented button:focus-visible, .md-button:focus-visible, .select-pill:focus-visible {
   outline: 2px solid var(--primary); outline-offset: 2px;
 }
 

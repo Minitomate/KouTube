@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useStore } from '../lib/store';
+import { useStore, useLocale } from '../lib/store';
 import { loadSettings, saveSettings } from '../lib/settings';
 import { isTauri } from '../lib/desktop';
 import MultiDropdown from './MultiDropdown';
@@ -10,6 +10,7 @@ import { displayLabel } from '../lib/lang';
 /** Right column: basic format + quality, advanced behind a persisted toggle. */
 export default function DownloadOptionsCard() {
   const { format, quality, container, codec, audioContainer, audioCodec, audioQuality, captionsFormat, showAdvanced, audioTracks, media, set, toggleAudioTrack, toggleCaption, captions } = useStore();
+  const { lang, t } = useLocale();
   const qualities = media?.qualities?.length ? media.qualities : ['best'];
   const heights = qualities.filter((q) => q !== 'best');
   const max = heights.length ? heights[heights.length - 1] : null;
@@ -34,49 +35,50 @@ export default function DownloadOptionsCard() {
 
   return (
     <div className="card">
-      <h2>Download options</h2>
+      <h2>{t('options.heading')}</h2>
       <PreferenceFields
         value={{ format, quality, container, codec, audioContainer, audioCodec, audioQuality, captionsFormat }}
         onChange={(p) => set(p)}
         qualities={qualities}
-        qualityHint={max ? ` (up to ${max}p)` : ''}
+        qualityHint={max ? t('options.upTo', { q: max }) : ''}
         desktop={isTauri()}
         advanced={showAdvanced}
         captionsDisabled={noCaps}
       />
       {format === 'captions' && (
         <p className="meta" style={{ marginTop: 12 }}>
-          Subtitle files only (.{captionsFormat}) — no video or audio is downloaded.
+          {t('options.subsOnly', { fmt: captionsFormat })}
         </p>
       )}
       {(format === 'audio' || (format !== 'captions' && showAdvanced)) && (
         <MultiDropdown
-          label="Audio tracks"
-          options={tracks.map((t) => ({ id: t.id, label: displayLabel(t.id, t.label), badge: t.original ? 'Original' : undefined }))}
+          label={t('options.audioTracks')}
+          options={tracks.map((tr) => ({ id: tr.id, label: displayLabel(tr.id, tr.label, lang), badge: tr.original ? t('options.original') : undefined }))}
           selected={audioTracks}
           onToggle={toggleAudioTrack}
-          emptyText="No dubbed tracks for this video."
-          summaryNone="No audio"
+          emptyText={t('options.noDubbed')}
+          summaryNone={t('options.noAudio')}
         />
       )}
       {(format === 'captions' || (format !== 'audio' && showAdvanced)) && (
         <MultiDropdown
-          label="Captions"
-          options={caps.map((c) => ({ id: c.id, label: displayLabel(c.id, c.label), badge: c.manual ? 'Manual' : 'Auto' }))}
+          label={t('options.captions')}
+          options={caps.map((c) => ({ id: c.id, label: displayLabel(c.id, c.label, lang), badge: c.manual ? t('options.badgeManual') : t('options.badgeAuto') }))}
           selected={captions}
           onToggle={toggleCaption}
-          emptyText="No manual captions for this video."
-          summaryNone="None"
+          emptyText={t('options.noManual')}
+          summaryNone={t('options.none')}
           disabled={noCaps}
+          disabledHint={t('options.noCapsHint')}
         />
       )}
       {format === 'audio' && (
         <p className="meta" style={{ marginTop: 12 }}>
-          Audio only — no captions are downloaded.
+          {t('options.audioOnly')}
         </p>
       )}
       <div style={{ marginTop: 12 }}>
-        <Switch checked={showAdvanced} onChange={() => void toggleAdvanced()} label="Show advanced settings" />
+        <Switch checked={showAdvanced} onChange={() => void toggleAdvanced()} label={t('options.advanced')} />
       </div>
     </div>
   );

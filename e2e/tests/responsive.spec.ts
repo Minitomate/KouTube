@@ -21,7 +21,7 @@ test.describe('responsive low-res', () => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
     await expect(page.getByLabel('Download', { exact: true })).toBeVisible();
-    await expect(page.getByLabel('Quality')).toBeVisible();
+    await expect(page.locator('[aria-labelledby^="md-quality"]')).toBeVisible();
   });
 
   test('single column stacks on narrow screens', async ({ page }) => {

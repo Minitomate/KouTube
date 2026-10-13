@@ -3,6 +3,7 @@
 // Large files go direct-first over parallel ranged parts when possible.
 import { z } from 'zod';
 import pLimit from 'p-limit';
+import { t, type Locale } from './i18n';
 
 export const PART_BYTES = 8 * 1024 * 1024;
 export const PART_CONCURRENCY = 6;
@@ -85,9 +86,9 @@ export function transferUrl(p: Prepare): string {
 }
 
 /** Badge text for a transfer: kind plus language/quality detail. */
-export function kindBadge(kind: 'video' | 'audio' | 'captions' | undefined, detail?: string): string | null {
+export function kindBadge(kind: 'video' | 'audio' | 'captions' | undefined, detail?: string, locale: Locale = 'en'): string | null {
   if (!kind) return null;
-  const label = kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : 'Captions';
+  const label = kind === 'video' ? t(locale, 'kind.video') : kind === 'audio' ? t(locale, 'kind.audio') : t(locale, 'kind.captions');
   return detail ? `${label} · ${detail}` : label;
 }
 
@@ -101,20 +102,22 @@ export interface StatusView {
 }
 
 /** Card status line: stage label + bytes (X/Y when known) + speed/ETA note. */
-export function statusLine(t: StatusView, elapsed: string | null): string {
-  if (t.status === 'done') return t.note ? `Saved ✓ · ${t.note}` : 'Saved ✓';
-  if (t.status === 'error') return `failed: ${t.error ?? ''}`;
-  if (t.status === 'cancelled') return 'cancelled';
-  if (t.stage === 'preparing') return 'Preparing…';
-  const bytes = t.total !== null
-    ? `${fmtBytes(t.loaded)}/${fmtBytes(t.total)}`
-    : t.loaded > 0 ? `${fmtBytes(t.loaded)} downloaded` : null;
-  const withNote = (base: string) => (t.note ? `${base} · ${t.note}` : base);
-  const processing = t.stage === 'processing' || (t.total !== null && t.loaded >= t.total);
+export function statusLine(view: StatusView, elapsed: string | null, locale: Locale = 'en'): string {
+  if (view.status === 'done') return view.note ? `${t(locale, 'status.saved')} · ${view.note}` : t(locale, 'status.saved');
+  if (view.status === 'error') return t(locale, 'status.failed', { msg: view.error ?? '' });
+  if (view.status === 'cancelled') return t(locale, 'status.cancelled');
+  if (view.stage === 'preparing') return t(locale, 'status.preparing');
+  const bytes = view.total !== null
+    ? `${fmtBytes(view.loaded)}/${fmtBytes(view.total)}`
+    : view.loaded > 0 ? t(locale, 'status.downloaded', { n: fmtBytes(view.loaded) }) : null;
+  const withNote = (base: string) => (view.note ? `${base} · ${view.note}` : base);
+  const processing = view.stage === 'processing' || (view.total !== null && view.loaded >= view.total);
   if (processing) {
-    return withNote(`Processing… ${fmtBytes(t.loaded)} received${elapsed ? ` · ${elapsed}` : ''}`);
+    return withNote(t(locale, 'status.processing', {
+      x: fmtBytes(view.loaded), elapsed: elapsed ? ` · ${elapsed}` : '',
+    }));
   }
-  return withNote(`Downloading${bytes ? ` · ${bytes}` : ''}`);
+  return withNote(`${t(locale, 'status.downloading')}${bytes ? ` · ${bytes}` : ''}`);
 }
 
 /** Split a transfer note into speed / ETA / remainder.

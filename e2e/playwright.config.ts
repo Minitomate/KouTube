@@ -7,6 +7,9 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://localhost:5173',
+    // UI strings are English-asserted: pin the browser locale so auto mode
+    // never resolves Spanish on non-English CI runners.
+    locale: 'en-US',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'on-first-retry',

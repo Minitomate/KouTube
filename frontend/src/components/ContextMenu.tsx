@@ -1,8 +1,9 @@
 // Custom context menu: replaces the webview default everywhere.
 // Every entry reuses an existing action; nothing here invents behavior.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useStore, type Transfer } from '../lib/store';
+import { useStore, useLocale, type Transfer } from '../lib/store';
 import type { Settings } from '../lib/settings';
+import { t, type Locale } from '../lib/i18n';
 import { isTauri, playFile, revealFile, trashDownload } from '../lib/desktop';
 import { runUpdateCheck, getAppVersion } from '../lib/updater';
 import { copyDebugLog } from '../lib/debug';
@@ -30,46 +31,46 @@ export interface MenuOptions {
 }
 
 /** Pure spec: entry ids + labels per context. Unit-tested. */
-export function menuEntriesFor(ctx: MenuContext, opts: MenuOptions): MenuEntry[] {
+export function menuEntriesFor(ctx: MenuContext, opts: MenuOptions, locale: Locale = 'en'): MenuEntry[] {
   switch (ctx.kind) {
     case 'input':
       return [
-        { id: 'cut', label: 'Cut' },
-        { id: 'copy', label: 'Copy' },
-        { id: 'paste', label: 'Paste' },
-        { id: 'selectAll', label: 'Select all' },
+        { id: 'cut', label: t(locale, 'menu.cut') },
+        { id: 'copy', label: t(locale, 'menu.copy') },
+        { id: 'paste', label: t(locale, 'menu.paste') },
+        { id: 'selectAll', label: t(locale, 'menu.selectAll') },
         { id: MENU_SEP, label: '' },
-        { id: 'pasteInspect', label: 'Paste & Inspect' },
+        { id: 'pasteInspect', label: t(locale, 'menu.pasteInspect') },
       ];
     case 'transfer': {
-      const t = ctx.transfer;
+      const tr = ctx.transfer;
       const entries: MenuEntry[] = [];
       // Mirror the card buttons: actions only exist for finished Tauri cards.
-      if (t.status === 'done' && t.filepath && opts.desktop) {
+      if (tr.status === 'done' && tr.filepath && opts.desktop) {
         entries.push(
-          { id: 'play', label: 'Play' },
-          { id: 'reveal', label: 'Show in folder' },
-          { id: 'copyPath', label: 'Copy file path' },
+          { id: 'play', label: t(locale, 'menu.play') },
+          { id: 'reveal', label: t(locale, 'menu.reveal') },
+          { id: 'copyPath', label: t(locale, 'menu.copyPath') },
           { id: MENU_SEP, label: '' },
-          { id: 'delete', label: 'Delete file', danger: true },
+          { id: 'delete', label: t(locale, 'menu.delete'), danger: true },
         );
       }
-      if (t.error) entries.push({ id: 'copyError', label: 'Copy error text' });
-      entries.push({ id: 'remove', label: 'Remove from list' });
+      if (tr.error) entries.push({ id: 'copyError', label: t(locale, 'menu.copyError') });
+      entries.push({ id: 'remove', label: t(locale, 'menu.remove') });
       return entries;
     }
     default:
       return [
         { id: 'header', label: `KouTube ${opts.version}`, disabled: true },
-        { id: 'pasteInspect', label: 'Paste & Inspect' },
-        { id: 'copyDebug', label: 'Copy debug log' },
-        { id: 'checkUpdates', label: 'Check for updates' },
+        { id: 'pasteInspect', label: t(locale, 'menu.pasteInspect') },
+        { id: 'copyDebug', label: t(locale, 'menu.copyDebug') },
+        { id: 'checkUpdates', label: t(locale, 'menu.checkUpdates') },
         { id: MENU_SEP, label: '' },
-        { id: 'goHome', label: 'Home' },
-        { id: 'goSettings', label: 'Settings' },
+        { id: 'goHome', label: t(locale, 'menu.home') },
+        { id: 'goSettings', label: t(locale, 'menu.settings') },
         { id: MENU_SEP, label: '' },
-        { id: 'accent', label: 'Accent color…' },
-        { id: 'variant', label: 'Variant…' },
+        { id: 'accent', label: t(locale, 'menu.accent') },
+        { id: 'variant', label: t(locale, 'menu.variant') },
         ...(opts.dev
           ? [
               { id: MENU_SEP, label: '' },
@@ -87,9 +88,10 @@ export function menuEntriesFor(ctx: MenuContext, opts: MenuOptions): MenuEntry[]
 export function accentEntries(
   seeds: Array<{ name: string; seed: string }>,
   currentSeed: string,
+  locale: Locale = 'en',
 ): MenuEntry[] {
   return [
-    { id: 'back', label: '← Back' },
+    { id: 'back', label: t(locale, 'menu.back') },
     { id: MENU_SEP, label: '' },
     ...seeds.map((s) => ({
       id: `seed:${s.seed}`,
@@ -101,9 +103,10 @@ export function accentEntries(
 export function variantEntries(
   variants: Array<{ id: string; label: string }>,
   currentVariant: string,
+  locale: Locale = 'en',
 ): MenuEntry[] {
   return [
-    { id: 'back', label: '← Back' },
+    { id: 'back', label: t(locale, 'menu.back') },
     { id: MENU_SEP, label: '' },
     ...variants.map((v) => ({
       id: `variant:${v.id}`,
@@ -183,6 +186,7 @@ export default function ContextMenu() {
   const [version, setVersion] = useState('…');
   const menuRef = useRef<HTMLDivElement>(null);
   const lastMenu = useRef<OpenMenu | null>(null);
+  const { lang, t: tx } = useLocale();
 
   useEffect(() => {
     getAppVersion().then(setVersion).catch(() => setVersion('unknown'));
@@ -204,16 +208,16 @@ export default function ContextMenu() {
         ctx = { kind: 'input', input };
       } else {
         const card = target?.closest?.('[data-transfer-id]');
-        const t = card
+        const found = card
           ? useStore.getState().queue.find((q) => q.id === card.getAttribute('data-transfer-id'))
           : undefined;
-        ctx = t ? { kind: 'transfer', transfer: t } : { kind: 'global' };
+        ctx = found ? { kind: 'transfer', transfer: found } : { kind: 'global' };
       }
       const entries = menuEntriesFor(ctx, {
         dev: import.meta.env.DEV,
         version,
         desktop: isTauri(),
-      });
+      }, lang);
       const opened: OpenMenu = {
         // Compact rows (~32px each): the whole menu always fits, no scroll.
         x: Math.max(8, Math.min(e.clientX, window.innerWidth - 200)),
@@ -250,7 +254,7 @@ export default function ContextMenu() {
       window.removeEventListener('resize', close);
       window.removeEventListener('pointerdown', onPointerDown, true);
     };
-  }, [close, version]);
+  }, [close, version, lang]);
 
   // Keyboard: focus the first action when the menu opens.
   useEffect(() => {
@@ -263,7 +267,7 @@ export default function ContextMenu() {
     const { SEEDS, VARIANTS } = await import('../lib/settings');
     const s = useStore.getState();
     setSubmenu(
-      kind === 'accent' ? accentEntries(SEEDS, s.seed) : variantEntries(VARIANTS, s.variant),
+      kind === 'accent' ? accentEntries(SEEDS, s.seed, lang) : variantEntries(VARIANTS, s.variant, lang),
     );
   }
 
@@ -303,13 +307,13 @@ export default function ContextMenu() {
         case 'copyPath':
         case 'delete': {
           if (ctx.kind !== 'transfer') return;
-          const t = ctx.transfer;
-          if (!t.filepath) throw new Error('No file attached yet.');
-          if (id === 'play') await playFile(t.filepath);
-          else if (id === 'reveal') await revealFile(t.filepath);
-          else if (id === 'copyPath') await navigator.clipboard.writeText(t.filepath);
+          const tr = ctx.transfer;
+          if (!tr.filepath) throw new Error(tx('menu.noFile'));
+          if (id === 'play') await playFile(tr.filepath);
+          else if (id === 'reveal') await revealFile(tr.filepath);
+          else if (id === 'copyPath') await navigator.clipboard.writeText(tr.filepath);
           else {
-            setConfirmDelete(t);
+            setConfirmDelete(tr);
             close();
             return;
           }
@@ -327,7 +331,7 @@ export default function ContextMenu() {
           await copyDebugLog();
           break;
         case 'checkUpdates':
-          await runUpdateCheck();
+          await runUpdateCheck(lang);
           break;
         case 'goHome':
         case 'goSettings':
@@ -390,10 +394,10 @@ export default function ContextMenu() {
   if (confirmDelete) {
     return (
       <Confirm
-        title="Move file to trash?"
-        body="The download stays in the list. This cannot be undone from here."
+        title={tx('transfer.trashTitle')}
+        body={tx('transfer.trashBody')}
         items={confirmDelete.filepath ? [confirmDelete.filepath] : []}
-        confirmLabel="Move to trash"
+        confirmLabel={tx('transfer.trashConfirm')}
         onConfirm={() => void confirmTrash()}
         onCancel={() => setConfirmDelete(null)}
       />

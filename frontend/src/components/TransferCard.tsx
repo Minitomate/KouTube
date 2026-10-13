@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useStore } from '../lib/store';
+import { useStore, useLocale } from '../lib/store';
 import { fmtBytes, kindBadge, splitStats, statusLine } from '../lib/transfer';
 import { isTauri, playFile, revealFile, trashDownload } from '../lib/desktop';
 import Confirm from './Confirm';
@@ -12,6 +12,7 @@ function fmtElapsed(ms: number): string {
 
 export default function TransferCard({ transferId, onRemove }: { transferId: string; onRemove: (id: string) => void }) {
   const item = useStore((s) => s.queue.find((q) => q.id === transferId));
+  const { lang, t } = useLocale();
   const [confirmTrash, setConfirmTrash] = useState(false);
   const [actionError, setActionError] = useState('');
   const [, setTick] = useState(0);
@@ -23,7 +24,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   }, [alive, transferId]);
   if (!item) return null;
   const done = item.status === 'done';
-  const badge = kindBadge(item.kind, item.detail);
+  const badge = kindBadge(item.kind, item.detail, lang);
   // Totals can be estimates (mux): never render over 100%. Once every
   // expected byte arrived but the stream continues, say so honestly.
   // Percent-only sources (desktop sidecar classic lines): fall back to percent.
@@ -33,7 +34,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   // Unknown total and no percent: busy stripe, never a fake-full bar.
   const indeterminate = item.status === 'working' && pct === null;
   const elapsed = item.mergeAt ? fmtElapsed(Date.now() - item.mergeAt) : null;
-  const baseText = statusLine(item, elapsed);
+  const baseText = statusLine(item, elapsed, lang);
   const statusText = (pct !== null && item.total == null && item.status === 'working' && item.stage !== 'preparing')
     ? `${baseText} · ${pct}%`
     : baseText;
@@ -45,9 +46,10 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
     ? `${fmtBytes(item.loaded)}/${fmtBytes(item.total)}`
     : item.loaded > 0 ? fmtBytes(item.loaded) : null;
   const showStats = item.status === 'working';
-  const stageWord = item.stage === 'preparing' ? 'Preparing…'
-    : item.stage === 'processing' ? `Processing…${elapsed ? ` · ${elapsed}` : ''}`
-    : 'Downloading';
+  // Same key source as statusLine: one dictionary entry per stage word.
+  const stageWord = item.stage === 'preparing' ? t('transfer.preparing')
+    : item.stage === 'processing' ? `${t('transfer.processing')}${elapsed ? ` · ${elapsed}` : ''}`
+    : t('transfer.downloading');
   const statusMeta = item.status === 'working'
     ? [stageWord, pct !== null && bytesText === null ? `${pct}%` : null, stats.rest].filter(Boolean).join(' · ')
     : statusText;
@@ -60,7 +62,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       // Tauri rejects invokes with plain strings, not Errors — String(e)
       // keeps the real reason visible instead of a bare fallback.
       console.error('[KouTube] play failed', item.filepath, e);
-      setActionError(`Could not open the file: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t('transfer.openFileFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   }
   async function reveal() {
@@ -69,7 +71,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       await revealFile(item.filepath);
     } catch (e) {
       console.error('[KouTube] reveal failed', item.filepath, e);
-      setActionError(`Could not open the folder: ${e instanceof Error ? e.message : String(e)}`);
+      setActionError(t('transfer.openFolderFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   }
   async function trash() {
@@ -81,7 +83,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       await trashDownload(item.filepath);
       onRemove(transferId);
     } catch {
-      setActionError('Could not move the file to trash.');
+      setActionError(t('transfer.trashFailed'));
     }
   }
   return (
@@ -90,9 +92,9 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
         <strong className="job-title">{item.title}</strong>
       </div>
       <div className="row job-meta-row">
-        {badge && <span className="chip tonal" aria-label={`Download type ${badge}`}>{badge}</span>}
+        {badge && <span className="chip tonal" aria-label={t('transfer.downloadType', { badge })}>{badge}</span>}
         <span className="meta job-status">{statusMeta}</span>
-        <button className="pill-btn text" style={{ minHeight: 32 }} aria-label={`Remove ${item.title}`} onClick={() => onRemove(transferId)}>
+        <button className="pill-btn text" style={{ minHeight: 32 }} aria-label={t('transfer.remove', { title: item.title })} onClick={() => onRemove(transferId)}>
           ✕
         </button>
       </div>
@@ -118,7 +120,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
         {...(pct === null ? {} : { 'aria-valuenow': pct })}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={`Download progress ${item.title}`}
+        aria-label={t('transfer.progress', { title: item.title })}
       >
         <div style={pct === null ? undefined : { width: `${pct}%` }} />
       </div>
@@ -126,19 +128,19 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       {actionError && <div className="field-error" role="alert">{actionError}</div>}
       {done && item.filepath && isTauri() && (
         <div className="row" style={{ marginTop: 8 }}>
-          <button className="pill-btn tonal icon-btn" onClick={play} aria-label={`Play ${item.title}`} title="Play"><Icon d={PATHS.play} /></button>
-          <button className="pill-btn outlined icon-btn" onClick={reveal} aria-label={`Show ${item.title} in folder`} title="Show in folder"><Icon d={PATHS.folder} /></button>
-          <button className="pill-btn outlined icon-btn" onClick={() => setConfirmTrash(true)} aria-label={`Delete ${item.title}`} title="Delete file">
+          <button className="pill-btn tonal icon-btn" onClick={play} aria-label={t('transfer.playItem', { title: item.title })} title={t('transfer.play')}><Icon d={PATHS.play} /></button>
+          <button className="pill-btn outlined icon-btn" onClick={reveal} aria-label={t('transfer.showItem', { title: item.title })} title={t('transfer.showFolder')}><Icon d={PATHS.folder} /></button>
+          <button className="pill-btn outlined icon-btn" onClick={() => setConfirmTrash(true)} aria-label={t('transfer.deleteItem', { title: item.title })} title={t('transfer.deleteTitle')}>
             <Icon d={PATHS.trash} />
           </button>
         </div>
       )}
       {confirmTrash && (
         <Confirm
-          title="Move file to trash?"
-          body="The download stays in the list. This cannot be undone from here."
+          title={t('transfer.trashTitle')}
+          body={t('transfer.trashBody')}
           items={item.filepath ? [item.filepath] : []}
-          confirmLabel="Move to trash"
+          confirmLabel={t('transfer.trashConfirm')}
           onConfirm={() => { setConfirmTrash(false); void trash(); }}
           onCancel={() => setConfirmTrash(false)}
         />

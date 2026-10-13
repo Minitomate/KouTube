@@ -1,6 +1,8 @@
 import { create } from 'zustand';
+import { useCallback } from 'react';
 import type { MediaInfo } from './api';
 import type { DownloadDefaults } from './settings';
+import { readLocaleSettingSync, resolveLocale, t as tr, type I18nKey, type Locale, type LocaleSetting } from './i18n';
 
 export type Format = 'video' | 'audio' | 'captions';
 export type TransferStatus = 'working' | 'done' | 'error' | 'cancelled';
@@ -94,6 +96,7 @@ export function effectiveQuality(
   formats: Array<{ height?: number | null; vcodec?: string | null }>,
   wanted: string,
   codec: Codec,
+  locale: Locale = 'en',
 ): { quality: string; note: string | null } {
   if (codec === 'auto' || wanted === 'best') return { quality: wanted, note: null };
   const want = Number(wanted);
@@ -106,7 +109,7 @@ export function effectiveQuality(
   const best = String(heights[heights.length - 1]);
   return best === wanted
     ? { quality: wanted, note: null }
-    : { quality: best, note: `${CODEC_LABELS[codec]} best available: ${best}p` };
+    : { quality: best, note: tr(locale, 'plan.codecBest', { label: CODEC_LABELS[codec], best }) };
 }
 
 /** Stamp download defaults onto the store (boot + Inspect); coerces stale combos. */
@@ -143,6 +146,9 @@ interface State {
   captions: string[];
   queue: Transfer[];
   theme: 'light' | 'dark' | 'auto';
+  locale: LocaleSetting;
+  /** Bumped on OS/browser languagechange so auto mode re-renders. */
+  localeTick: number;
   seed: string;
   variant: 'tonal-spot' | 'vibrant' | 'expressive';
   showAdvanced: boolean;
@@ -168,6 +174,17 @@ export function resolveTheme(stored: Theme, systemDark: boolean): 'light' | 'dar
   return systemDark ? 'dark' : 'light';
 }
 
+/** Resolved UI locale + bound translator; re-renders on languagechange bumps.
+ *  The translator is stable per language: safe to list in effect deps. */
+export function useLocale(): { lang: Locale; t: (key: I18nKey, vars?: Record<string, string | number>) => string } {
+  const setting = useStore((s) => s.locale);
+  const tick = useStore((s) => s.localeTick);
+  void tick;
+  const lang = resolveLocale(setting);
+  const t = useCallback((key: I18nKey, vars?: Record<string, string | number>) => tr(lang, key, vars), [lang]);
+  return { lang, t };
+}
+
 const QUALITIES = ['360', '720', '1080', '1440', '2160', '4320', 'best'];
 
 export { QUALITIES };
@@ -190,6 +207,8 @@ export const useStore = create<State>((set) => ({
   captions: [],
   queue: [],
   theme: 'auto',
+  locale: readLocaleSettingSync(),
+  localeTick: 0,
   seed: '#6750A4',
   variant: 'tonal-spot' as const,
   showAdvanced: false,

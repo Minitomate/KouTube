@@ -27,7 +27,8 @@ On first launch the app fetches its tools (`yt-dlp` + `ffmpeg`, one-time downloa
 - **Captions** — manual tracks only (auto-generated are never listed), SRT or VTT, embedded or sidecar
 - **Batch queue** — playlists and multi-track picks download together, with a tunable concurrency limit, live progress (MB + speed), overwrite confirmation, and Play / Show-in-folder actions
 - **Your defaults** — save preferred format, quality, containers, and codecs; collapse the rest behind *Show advanced settings*
-- **Extras** — offline banner, dark/light/auto Material themes, debug log
+- **Speaks your language** — English and Spanish UI that follows your system language automatically, with a manual override in Settings → Language
+- **Extras** — offline banner, dark/light/auto Material themes, right-click context menu, update banner + Settings card, debug log you can copy or save to a file
 
 ## Development
 

@@ -92,13 +92,13 @@ test.describe('settings tab', () => {
     await app.goto();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Default download' })).toBeVisible();
-    await page.getByLabel('Quality').selectOption('720');
-    await page.getByLabel('Container').selectOption('mkv');
+    await app.pickSingle('quality', '720p');
+    await app.pickSingle('container', 'MKV');
     await page.getByRole('button', { name: 'Home', exact: true }).click();
     await app.inspectUrl(URL);
     await app.advanced();
-    await expect(page.getByLabel('Quality')).toHaveValue('720');
-    await expect(page.getByLabel('Container')).toHaveValue('mkv');
+    await expect(page.locator('[aria-labelledby^="md-quality"]')).toContainText('720p');
+    await expect(page.locator('[aria-labelledby="md-container"]')).toContainText('MKV');
   });
 
   test('default format applies on next inspect', async ({ page }) => {

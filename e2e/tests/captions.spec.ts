@@ -67,7 +67,7 @@ test.describe('captions (manual-only dropdown)', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.advanced();
-    await expect(page.getByRole('button', { name: 'Captions format' })).toBeDisabled();
+    await expect(page.getByRole('group', { name: 'Format' }).getByRole('button', { name: 'Captions format' })).toBeDisabled();
     await expect(page.locator('[aria-labelledby="md-captions"]')).toBeDisabled();
   });
 
@@ -147,7 +147,7 @@ test.describe('captions-only mode', () => {
     await app.pickFormat('captions');
     await app.advanced();
     await app.pickCaptions('en - English');
-    await page.getByLabel('Captions file format').selectOption('vtt');
+    await app.pickSingle('captions-format', 'VTT');
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
     expect(urls).toHaveLength(1);

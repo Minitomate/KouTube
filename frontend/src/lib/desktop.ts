@@ -2,6 +2,7 @@
 // download run through Rust commands (yt-dlp sidecar) instead of HTTP.
 // Falls back to the web api when not running inside Tauri.
 import { normalizeMedia, type MediaInfo } from './api';
+import { t, type Locale } from './i18n';
 
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -133,10 +134,10 @@ export async function readClipboardText(): Promise<string> {
 }
 
 /** Inspect failure text: desktop has no backend, so say so plainly. */
-export function inspectFailedMessage(desktop: boolean): string {
+export function inspectFailedMessage(desktop: boolean, locale: Locale = 'en'): string {
   return desktop
-    ? 'Could not inspect this video. Check the link and retry.'
-    : 'Could not inspect URL. Is the backend running?';
+    ? t(locale, 'desktop.inspectDesktop')
+    : t(locale, 'desktop.inspectWeb');
 }
 
 export async function pickFolder(): Promise<string | null> {
@@ -146,16 +147,16 @@ export async function pickFolder(): Promise<string | null> {
 
 /** Folder resolution with loud errors: never silent, never stuck-busy.
  * Always prompts: persistence lives in settings, not here. */
-export async function resolveOutDir(): Promise<string> {
+export async function resolveOutDir(locale: Locale = 'en'): Promise<string> {
   let picked: string | string[] | null;
   try {
     picked = await pickFolder();
   } catch (e) {
     throw new Error(e instanceof Error
-      ? `folder picker failed: ${e.message}`
-      : 'folder picker failed');
+      ? t(locale, 'desktop.folderFailed', { msg: e.message })
+      : t(locale, 'desktop.folderFailedShort'));
   }
-  if (!picked || Array.isArray(picked)) throw new Error('No folder selected');
+  if (!picked || Array.isArray(picked)) throw new Error(t(locale, 'desktop.noFolder'));
   return picked;
 }
 
@@ -245,6 +246,18 @@ export async function cancelDesktopDownload(jobId: string): Promise<void> {
 export async function trashDownload(path: string): Promise<void> {
   const { invoke } = await tauri();
   await invoke('trash_file', { path });
+}
+
+/** Save dialog for the debug log; null when the user cancels. */
+export async function pickSaveLogPath(defaultName: string): Promise<string | null> {
+  const dialog = await import('@tauri-apps/plugin-dialog');
+  return dialog.save({ defaultPath: defaultName, filters: [{ name: 'Text', extensions: ['txt'] }] });
+}
+
+/** Write user-picked text (debug log) via the backend. */
+export async function saveTextFile(path: string, contents: string): Promise<void> {
+  const { invoke } = await tauri();
+  await invoke('save_text_file', { path, contents });
 }
 
 export async function existingOutputs(outDir: string, videoId: string): Promise<string[]> {

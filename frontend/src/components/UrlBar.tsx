@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
-import { useStore, applyDownloadDefaults } from '../lib/store';
+import { useStore, applyDownloadDefaults, useLocale } from '../lib/store';
 import { api } from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import { isTauri, desktopResolve, ensureDesktopTools, inspectFailedMessage, readClipboardText } from '../lib/desktop';
@@ -15,13 +15,12 @@ export function defaultAudio(media: MediaInfo): string[] {
   return [orig.id];
 }
 
-const ytSchema = z.string().url().refine(
-  (u) => /(youtube\.com|youtu\.be)/.test(u),
-  { message: 'Only YouTube URLs are supported' },
-);
+const urlSchema = z.string().url();
+const YT_RE = /(youtube\.com|youtu\.be)/;
 
 export default function UrlBar() {
   const { url, set } = useStore();
+  const { lang, t } = useLocale();
   const [draft, setDraft] = useState(url);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -37,9 +36,12 @@ export default function UrlBar() {
 
   async function inspect(target?: string) {
     const value = (target ?? draft).trim();
-    const parsed = ytSchema.safeParse(value);
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Invalid URL');
+    if (!urlSchema.safeParse(value).success) {
+      setError(t('urlbar.invalid'));
+      return;
+    }
+    if (!YT_RE.test(value)) {
+      setError(t('urlbar.onlyYoutube'));
       return;
     }
     setError('');
@@ -60,8 +62,8 @@ export default function UrlBar() {
           await ensureDesktopTools();
         } catch (e) {
           setError(e instanceof Error
-            ? `Setup failed: ${e.message}. Check your connection and retry.`
-            : 'Setup failed. Check your connection and retry.');
+            ? t('urlbar.setupFailed', { msg: e.message })
+            : t('urlbar.setupFailedShort'));
           return;
         }
         const media = await desktopResolve(value);
@@ -71,7 +73,7 @@ export default function UrlBar() {
         set({ url: value, media, step: 1, audioTracks: defaultAudio(media), ...(await loadDefaults()) });
       }
     } catch {
-      setError(inspectFailedMessage(isTauri()));
+      setError(inspectFailedMessage(isTauri(), lang));
     } finally {
       setLoading(false);
       set({ inspecting: false });
@@ -89,7 +91,7 @@ export default function UrlBar() {
       // Fall through to manual paste: focus + select the input so it's one keystroke.
       document.getElementById('url')?.focus();
       (document.getElementById('url') as HTMLInputElement | null)?.select?.();
-      setError(isTauri() ? 'Paste into the field manually.' : 'Clipboard blocked — paste manually (Ctrl+V).');
+      setError(isTauri() ? t('urlbar.pasteManual') : t('urlbar.clipboardBlocked'));
     }
   }
 
@@ -101,9 +103,9 @@ export default function UrlBar() {
 
   return (
     <div className="card urlbar-card">
-      <h2>Paste link</h2>
+      <h2>{t('urlbar.heading')}</h2>
       <div className="urlbar">
-        <label className="sr" htmlFor="url">YouTube URL</label>
+        <label className="sr" htmlFor="url">{t('urlbar.label')}</label>
         <input
           id="url"
           placeholder="https://youtube.com/watch?v=…"
@@ -111,18 +113,18 @@ export default function UrlBar() {
           onChange={(e) => setDraft(e.target.value)}
           inputMode="url"
         />
-        <button className="pill-btn tonal icon-btn" onClick={clear} disabled={!draft} aria-label="Clear link" title="Clear link">
+        <button className="pill-btn tonal icon-btn" onClick={clear} disabled={!draft} aria-label={t('urlbar.clear')} title={t('urlbar.clear')}>
           <Icon d={PATHS.clear} />
         </button>
-        <button className="pill-btn tonal icon-btn" onClick={paste} aria-label="Paste from clipboard" title="Paste from clipboard">
+        <button className="pill-btn tonal icon-btn" onClick={paste} aria-label={t('urlbar.paste')} title={t('urlbar.paste')}>
           <Icon d={PATHS.paste} />
         </button>
         <button
           className="pill-btn filled icon-btn"
           onClick={() => inspect()}
           disabled={loading}
-          aria-label="Inspect video"
-          title="Inspect video"
+          aria-label={t('urlbar.inspect')}
+          title={t('urlbar.inspect')}
           aria-busy={loading}
         >
           {loading ? <span className="spinner" aria-hidden="true" /> : <Icon d={PATHS.inspect} />}

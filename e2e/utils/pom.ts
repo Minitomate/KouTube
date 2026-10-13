@@ -38,8 +38,15 @@ export class KouTubePage {
   }
 
   async pickQuality(q: string) {
-    // DownloadOptionsCard renders Quality as a native select.
-    await this.page.getByLabel('Quality').selectOption(q);
+    // SingleDropdown (custom listbox, button id md-quality*): options read
+    // like '720p' / 'Best'. The open panel is unique; Escape closes it.
+    await this.pickSingle('quality', q === 'best' ? 'Best' : new RegExp(`${q}p`, 'i'));
+  }
+
+  /** Pick an option from a SingleDropdown by button-id stem + option name. */
+  async pickSingle(idStem: string, option: string | RegExp) {
+    await this.page.locator(`[aria-labelledby^="md-${idStem}"]`).click();
+    await this.page.locator('.md-panel').getByRole('option', { name: option }).click();
   }
 
   async pickAudioTrack(id: string) {

@@ -141,6 +141,8 @@ test.describe('parallel parts (user-end)', () => {
     await app.goto();
     await app.inspectUrl(URL);
     // Fixture heights are 480/720/1080: exact 1080p option exists, 4320 does not.
+    // Custom listbox: options only exist while the panel is open.
+    await page.locator('[aria-labelledby^="md-quality"]').click();
     await expect(page.getByRole('option', { name: '1080p', exact: true })).toHaveCount(1);
     await expect(page.getByRole('option', { name: /4320/ })).toHaveCount(0);
     await expect(page.getByText(/up to 1080p/)).toBeVisible();

@@ -1,3 +1,5 @@
+import { useLocale } from '../lib/store';
+
 interface Props {
   title: string;
   body?: string;
@@ -9,6 +11,7 @@ interface Props {
 
 /** Shared confirm modal (replaces native confirm for style + testability). */
 export default function Confirm({ title, body, items, confirmLabel, onConfirm, onCancel }: Props) {
+  const { t } = useLocale();
   return (
     <div className="modal-backdrop" role="presentation" onClick={onCancel}>
       <div
@@ -32,7 +35,7 @@ export default function Confirm({ title, body, items, confirmLabel, onConfirm, o
             onClick={onCancel}
             onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}
           >
-            Cancel
+            {t('confirm.cancel')}
           </button>
         </div>
       </div>

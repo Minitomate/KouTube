@@ -3,6 +3,7 @@
 // Release notes come from the manifest body: rendered as plain text only.
 import type { DownloadEvent, Update } from '@tauri-apps/plugin-updater';
 import { isTauri } from './desktop';
+import { localeTag, t, type Locale } from './i18n';
 import { useStore } from './store';
 
 export const RELEASES_URL = 'https://github.com/Minitomate/KouTube/releases/latest';
@@ -63,17 +64,18 @@ export function checkForUpdate(): Promise<UpdateInfo | null> {
 }
 
 /** Release date for display; null when missing or unparsable. Pure. */
-export function formatReleaseDate(iso: string | null): string | null {
+export function formatReleaseDate(iso: string | null, locale?: Locale): string | null {
   if (!iso) return null;
-  const t = new Date(iso).getTime();
-  return Number.isNaN(t) ? null : new Date(t).toLocaleDateString();
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms).toLocaleDateString(locale ? localeTag(locale) : undefined);
 }
 
 /** Downloads the pending update (re-checks when missing); install is separate. */
-export async function downloadPendingUpdate(onProgress: (p: UpdateProgress) => void): Promise<void> {
+export async function downloadPendingUpdate(onProgress: (p: UpdateProgress) => void, locale: Locale = 'en'): Promise<void> {
   if (!pending) await checkForUpdate();
   const update = pending;
-  if (!update) throw new Error('No update available.');
+  if (!update) throw new Error(t(locale, 'up.noUpdate'));
   let downloaded = 0;
   let total: number | null = null;
   await update.download((e: DownloadEvent) => {
@@ -90,9 +92,9 @@ export async function downloadPendingUpdate(onProgress: (p: UpdateProgress) => v
 
 /** Installs the downloaded update. Windows exits inside install;
  *  Linux/macOS return and must relaunch to run the new version. */
-export async function installPendingUpdate(): Promise<void> {
+export async function installPendingUpdate(locale: Locale = 'en'): Promise<void> {
   const update = pending;
-  if (!update) throw new Error('Nothing downloaded yet.');
+  if (!update) throw new Error(t(locale, 'up.nothingDl'));
   await update.install();
   pending = null;
 }
@@ -122,7 +124,7 @@ function progressPercent(downloaded: number, total: number | null): number | nul
 /** Shared check flow (boot + manual): drives the store fields the banner
  *  and the Settings card read. Stamps lastUpdateCheck only on success so
  *  an offline launch retries on the next launch instead of waiting 24h. */
-export async function runUpdateCheck(): Promise<boolean> {
+export async function runUpdateCheck(locale: Locale = 'en'): Promise<boolean> {
   const { set } = useStore.getState();
   set({ updateStatus: 'checking', updateError: null });
   try {
@@ -143,7 +145,7 @@ export async function runUpdateCheck(): Promise<boolean> {
     set({ updateStatus: 'uptodate' });
     return false;
   } catch (e) {
-    set({ updateStatus: 'error', updateError: e instanceof Error ? e.message : 'Update check failed.' });
+    set({ updateStatus: 'error', updateError: e instanceof Error ? e.message : t(locale, 'up.checkFailed') });
     return false;
   }
 }
@@ -151,18 +153,19 @@ export async function runUpdateCheck(): Promise<boolean> {
 /** Shared download+install flow: drives the same store fields. Reaching
  *  'ready' means Linux/macOS (Windows exits inside install). A failed
  *  install (deb/rpm, locked files) lands on 'error' with the fallback. */
-export async function runUpdateDownload(): Promise<void> {
+export async function runUpdateDownload(locale: Locale = 'en'): Promise<void> {
   useStore.getState().set({ updateStatus: 'downloading', updateProgress: null, updateError: null });
   try {
     await downloadPendingUpdate(({ downloaded, total }) =>
       useStore.getState().set({ updateProgress: progressPercent(downloaded, total) }),
+      locale,
     );
-    await installPendingUpdate();
+    await installPendingUpdate(locale);
     useStore.getState().set({ updateStatus: 'ready', updateProgress: 100 });
   } catch (e) {
     useStore.getState().set({
       updateStatus: 'error',
-      updateError: e instanceof Error ? e.message : 'Update failed.',
+      updateError: e instanceof Error ? e.message : t(locale, 'set.updateFailed'),
     });
   }
 }

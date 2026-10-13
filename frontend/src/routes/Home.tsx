@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import pLimit from 'p-limit';
-import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, type Transfer, type AudioQuality } from '../lib/store';
+import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, useLocale, type Transfer, type AudioQuality } from '../lib/store';
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, fmtClock, makeRateTracker, splitStats, throttleLatest, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
 import { captionLabel } from '../lib/lang';
@@ -20,6 +20,7 @@ const ZIP_CAP = 10;
 
 export default function Home() {
   const { url, media, inspecting, format, quality, container, codec, audioContainer, audioCodec, audioQuality, captionsFormat, audioTracks, captions, set, upsertTransfer, queue, online } = useStore();
+  const { lang, t } = useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
@@ -142,25 +143,25 @@ export default function Home() {
     const au = resolveAudio(audioContainer, audioCodec, audioQuality);
     if (format === 'captions') {
       if (captions.length === 0) {
-        return { quality: q, container: 'srt', notes, blocked: 'Select at least one caption language for captions mode.', audioCodec: au.codec, audioQuality: null };
+        return { quality: q, container: 'srt', notes, blocked: t('plan.noCaptions'), audioCodec: au.codec, audioQuality: null };
       }
       return { quality: q, container: 'srt', notes, audioCodec: au.codec, audioQuality: null };
     }
     if (format === 'audio' && audioTracks.length === 0) {
-      return { quality: q, container: cont, notes, blocked: 'Select at least one audio track for audio mode.', audioCodec: au.codec, audioQuality: null };
+      return { quality: q, container: cont, notes, blocked: t('plan.noAudio'), audioCodec: au.codec, audioQuality: null };
     }
     if (format === 'audio' && captions.length > 0) {
-      notes.push('Captions are skipped for audio-only.');
+      notes.push(t('plan.skipCaps'));
     }
     if (format === 'video' && media && !media.isPlaylist) {
-      const eff = effectiveQuality(media.formatCodecs, quality, codec);
+      const eff = effectiveQuality(media.formatCodecs, quality, codec, lang);
       if (eff.note) notes.push(eff.note);
       q = eff.quality;
       if (media.audioTracks.length === 0) {
-        notes.push('No audio tracks found — saving video-only.');
+        notes.push(t('plan.noAudioTracks'));
       } else if (audioTracks.length > 1 && cont === 'mp4') {
         cont = 'mkv';
-        notes.push('Merging to MKV: multiple audio tracks cannot go in MP4.');
+        notes.push(t('plan.mkv'));
       }
     }
     return { quality: q, container: cont, notes, audioCodec: au.codec, audioQuality: desktop ? au.quality : null };
@@ -170,7 +171,7 @@ export default function Home() {
   function kindDetail(kind: 'video' | 'audio' | 'captions', lang?: string, quality?: string, container?: string): string | undefined {
     if (kind === 'audio') return lang;
     if (kind === 'captions') return lang;
-    if (quality && container) return `${quality === 'best' ? 'best' : `${quality}p`} · ${container}`;
+    if (quality && container) return `${quality === 'best' ? t('kind.best') : `${quality}p`} · ${container}`;
     return undefined;
   }
 
@@ -233,7 +234,7 @@ export default function Home() {
       if (e instanceof DOMException && e.name === 'AbortError') {
         upsertTransfer({ id, title, loaded: 0, total: null, status: 'cancelled', stage: 'end', rid });
       } else {
-        const message = e instanceof Error ? e.message : 'Download failed';
+        const message = e instanceof Error ? e.message : t('home.downloadFailed');
         upsertTransfer({ id, title, loaded: 0, total: null, status: 'error', error: message, stage: 'end', rid });
         throw new Error(message);
       }
@@ -243,8 +244,8 @@ export default function Home() {
   }
 
   async function download() {
-    if (!url) { setError('Paste a YouTube URL first.'); return; }
-    if (!online) { setError('You are offline. Reconnect to download.'); return; }
+    if (!url) { setError(t('home.needUrl')); return; }
+    if (!online) { setError(t('home.offlineErr')); return; }
     const gate = planDownload();
     if (gate.blocked) { setError(gate.blocked); return; }
     setError('');
@@ -253,7 +254,7 @@ export default function Home() {
       try {
         await downloadDesktop();
       } catch (e) {
-        fail(e instanceof Error ? e.message : 'Download failed');
+        fail(e instanceof Error ? e.message : t('home.downloadFailed'));
       }
       return;
     }
@@ -265,7 +266,7 @@ export default function Home() {
       } else if (media?.isPlaylist && media.entries?.length) {
         const items = media.entries.slice(0, ZIP_CAP);
         if (media.entries.length > ZIP_CAP) {
-          setError(`ZIP capped at first ${ZIP_CAP} of ${media.entries.length} videos.`);
+          setError(t('home.zipCap', { cap: ZIP_CAP, n: media.entries.length }));
         }
         // Multi-track audio: one prepared file per (video, language).
         const langs = format === 'audio' && audioTracks.length > 1
@@ -296,12 +297,12 @@ export default function Home() {
           } catch (e2) {
             upsertTransfer({
               id, title: c.e.title || c.e.videoId, loaded: 0, total: null,
-              status: 'error', error: e2 instanceof Error ? e2.message : 'prepare failed', stage: 'end',
+              status: 'error', error: e2 instanceof Error ? e2.message : t('home.prepareFailed'), stage: 'end',
             });
           }
         }), max);
         const ok = zipItems.filter((it) => useStore.getState().queue.some((q) => q.id === it.id && q.status !== 'error'));
-        if (!ok.length) return fail('No playlist items could be prepared.');
+        if (!ok.length) return fail(t('home.noPrepared'));
         const zipCtl = new AbortController();
         abortRefs.current.add(zipCtl);
         try {
@@ -312,7 +313,7 @@ export default function Home() {
               upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'downloading' });
             },
             (percent) => {
-              const note = `Zipping ${Math.round(percent)}%`;
+              const note = t('home.zipping', { n: Math.round(percent) });
               for (const it of zipItems) {
                 const cur = useStore.getState().queue.find((q) => q.id === it.id);
                 if (cur?.status === 'working') upsertTransfer({ ...cur, note });
@@ -346,7 +347,7 @@ export default function Home() {
       }
       set({ step: 2 });
     } catch (e) {
-      fail(e instanceof Error ? e.message : 'Could not start download. Is the backend running?');
+      fail(e instanceof Error ? e.message : t('home.backendRunning'));
     } finally {
       setBusy(false);
       setCanCancel(false);
@@ -363,7 +364,7 @@ export default function Home() {
         }))
         : [{ pageUrl: url, title: media?.title ?? url, videoId: media?.videoId }];
     if (media?.isPlaylist && (media.entries?.length ?? 0) > ZIP_CAP) {
-      setError(`ZIP capped at first ${ZIP_CAP} of ${media.entries?.length} videos.`);
+      setError(t('home.zipCap', { cap: ZIP_CAP, n: media.entries?.length ?? 0 }));
     }
     const zipItems = videos.flatMap((v, i) => captions.map((sel, j) => {
       const auto = sel.startsWith('auto:');
@@ -393,8 +394,8 @@ export default function Home() {
       }, 250);
       try {
         const res = await fetch(it.url, { signal: subCtl.signal });
-        if (!res.ok) throw new Error(`Subtitles failed (HTTP ${res.status})`);
-        if (!res.body) throw new Error('Subtitles failed (empty body)');
+        if (!res.ok) throw new Error(t('home.subsFailedHttp', { code: res.status }));
+        if (!res.body) throw new Error(t('home.subsFailedBody'));
         const total = Number(res.headers.get('content-length')) || null;
         const reader = res.body.getReader();
         const chunks: Uint8Array[] = [];
@@ -417,7 +418,7 @@ export default function Home() {
         noteTo.cancel();
         upsertTransfer({ id, title: it.filename, loaded: total ?? loaded, total: total ?? loaded, status: 'done', stage: 'end', kind: 'captions', detail: lang });
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Download failed';
+        const message = e instanceof Error ? e.message : t('home.downloadFailed');
         prog.cancel();
         noteTo.cancel();
         upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'error', error: message, stage: 'end', kind: 'captions', detail: lang });
@@ -441,7 +442,7 @@ export default function Home() {
           upsertTransfer({ id: it.id, title: it.filename, loaded, total, status: 'working', stage: 'downloading' });
         },
         (percent) => {
-          const note = `Zipping ${Math.round(percent)}%`;
+          const note = t('home.zipping', { n: Math.round(percent) });
           for (const it of zipItems) {
             const cur = useStore.getState().queue.find((q) => q.id === it.id);
             if (cur?.status === 'working') upsertTransfer({ ...cur, note });
@@ -573,7 +574,7 @@ export default function Home() {
         if (m.kind === 'done') {
           finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end', note: e.note ?? undefined, filepath: e.filepath ?? undefined }, 'event: done');
         } else if (m.kind === 'error') {
-          finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? 'failed', stage: 'end' }, `event: error ${e.error ?? ''}`);
+          finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: e.error ?? t('home.failed'), stage: 'end' }, `event: error ${e.error ?? ''}`);
         } else if (m.kind === 'cancelled') {
           finish({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' }, 'event: cancelled');
         } else {
@@ -587,7 +588,7 @@ export default function Home() {
       const cur = useStore.getState().queue.find((q) => q.id === transferId);
       if (cur) upsertTransfer(tlog(cur, `invoke ok job=${jobId}, listener ok`));
     }).catch((err) => {
-      finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: err instanceof Error ? err.message : 'failed', stage: 'end' }, `invoke/listener failed: ${err instanceof Error ? err.message : err}`);
+      finish({ id: transferId, title, loaded: 0, total: null, status: 'error', error: err instanceof Error ? err.message : t('home.failed'), stage: 'end' }, `invoke/listener failed: ${err instanceof Error ? err.message : err}`);
     });
     await done;
   }
@@ -597,8 +598,8 @@ export default function Home() {
       await ensureDesktopTools();
     } catch (e) {
       setError(e instanceof Error
-        ? `Setup failed: ${e.message}. Check your connection and retry.`
-        : 'Setup failed. Check your connection and retry.');
+        ? t('urlbar.setupFailed', { msg: e.message })
+        : t('urlbar.setupFailedShort'));
       return;
     }
     let outDir: string;
@@ -608,14 +609,14 @@ export default function Home() {
       const { settings } = await loadSettings();
       splitKinds = settings.splitKinds;
       maxConc = clampConcurrent(settings.maxConcurrent);
-      outDir = settings.outDir || await resolveOutDir();
+      outDir = settings.outDir || await resolveOutDir(lang);
       if (settings.splitKinds) {
         const sub = format === 'audio' ? 'Audio' : format === 'captions' ? 'Captions' : 'Video';
         outDir = `${outDir.replace(/[/\\]$/, '')}/${sub}`;
       }
       await saveSettings({ ...settings, outDir: settings.outDir || outDir });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No folder selected');
+      setError(e instanceof Error ? e.message : t('desktop.noFolder'));
       return;
     }
     // Overwrite pre-check: single videos only, skip when already confirmed.
@@ -672,17 +673,17 @@ export default function Home() {
       for (const t of tasks) {
         upsertTransfer({ ...tlog(blankTransfer(t.id, t.title), 'queued'), kind: t.kind, detail: t.detail });
       }
-      await pool(tasks.map((t) => async () => {
+      await pool(tasks.map((task) => async () => {
         if (batchCancelled.current) return;
         try {
-          await downloadDesktopOne(t.pageUrl, t.title, outDir, t.id, t.extra);
+          await downloadDesktopOne(task.pageUrl, task.title, outDir, task.id, task.extra);
         } catch (err) {
-          setError(err instanceof Error ? err.message : 'Item failed');
+          setError(err instanceof Error ? err.message : t('home.itemFailed'));
         }
       }), max);
       set({ step: 2 });
     } catch (e) {
-      upsertTransfer({ id: 'desk-batch', title: url, loaded: 0, total: null, status: 'error', error: e instanceof Error ? e.message : 'failed', stage: 'end' });
+      upsertTransfer({ id: 'desk-batch', title: url, loaded: 0, total: null, status: 'error', error: e instanceof Error ? e.message : t('home.failed'), stage: 'end' });
       setBusy(false);
     }
   }
@@ -694,15 +695,18 @@ export default function Home() {
         <div className="card banner-card banner-offline" role="alert">
           <Icon d={PATHS.alert} />
           <div>
-            <strong>You're offline.</strong>
-            <span className="meta"> Downloads and inspection need a connection — they'll work again when you're back.</span>
+            <strong>{t('home.offlineTitle')}</strong>
+            <span className="meta">{t('home.offlineBody')}</span>
           </div>
         </div>
       )}
       {media?.isPlaylist && (
         <div className="card banner-card">
           <h2>{media.title}</h2>
-          <div className="meta">playlist · {media.playlistCount} videos {isTauri() ? `(files, max ${ZIP_CAP})` : `(ZIP, max ${ZIP_CAP})`}</div>
+          <div className="meta">{t('home.playlist', {
+            n: media.playlistCount ?? 0,
+            mode: isTauri() ? t('home.modeFiles', { cap: ZIP_CAP }) : t('home.modeZip', { cap: ZIP_CAP }),
+          })}</div>
         </div>
       )}
       <div className="inspect-grid">
@@ -710,7 +714,7 @@ export default function Home() {
           {inspecting && <MediaSkeleton />}
           {!inspecting && media && !media.isPlaylist && <VideoInfoCard media={media} />}
           {!inspecting && !media && (
-            <div className="card"><p className="empty">Paste a link and press Inspect to see details.</p></div>
+            <div className="card"><p className="empty">{t('home.empty')}</p></div>
           )}
         </div>
         <DownloadOptionsCard />
@@ -732,23 +736,23 @@ export default function Home() {
       <Footer />
       {overwriteAsk && (
         <Confirm
-          title="File already exists"
-          body="This video was downloaded before. Download again and overwrite?"
+          title={t('over.title')}
+          body={t('over.body')}
           items={overwriteAsk.files}
-          confirmLabel="Overwrite"
+          confirmLabel={t('over.confirm')}
           onConfirm={() => { setOverwriteAsk(null); void downloadDesktop(true); }}
           onCancel={() => setOverwriteAsk(null)}
         />
       )}
       <div className="sticky-cta">
         <div>
-          <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url} aria-label={media?.isPlaylist ? 'Download ZIP' : 'Download'}>
+          <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url} aria-label={media?.isPlaylist ? t('home.downloadZip') : t('home.download')}>
             {(() => {
               const active = queue.find((q) => q.status === 'working');
-              if (!busy || !active) return media?.isPlaylist ? 'Download ZIP' : 'Download';
+              if (!busy || !active) return media?.isPlaylist ? t('home.downloadZip') : t('home.download');
               const raw = active.total ? Math.round((active.loaded / active.total) * 100) : null;
               const pct = raw === null ? null : Math.min(100, raw);
-              const label = pct === null ? (active.note ?? 'Working…') : `${pct}%${active.note ? ` · ${active.note}` : ''}`;
+              const label = pct === null ? (active.note ?? t('home.working')) : `${pct}%${active.note ? ` · ${active.note}` : ''}`;
               return (
                 <>
                   {pct !== null && <span className="cta-fill" style={{ width: `${pct}%` }} aria-hidden="true" />}
@@ -758,8 +762,8 @@ export default function Home() {
             })()}
           </button>
           {busy && canCancel && (
-            <button className="pill-btn outlined" onClick={cancel} aria-label="Cancel download">
-              Cancel
+            <button className="pill-btn outlined" onClick={cancel} aria-label={t('home.cancelDownload')}>
+              {t('home.cancel')}
             </button>
           )}
         </div>
