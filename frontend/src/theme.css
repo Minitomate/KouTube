@@ -262,6 +262,18 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 .banner-offline > svg { flex: none; color: var(--error); margin-top: 2px; }
 /* Update banner: primary tint, same card contract as the offline banner. */
 .banner-update { background: color-mix(in srgb, var(--primary) 10%, var(--surface-container)); border: 1px solid var(--primary); }
+/* App footer: centered credit line closing each view. */
+.footer { text-align: center; margin: 20px 0 8px; }
+
+/* Custom context menu (replaces the webview default). Reuses md-panel rows. */
+.ctx-menu { position: fixed; z-index: 100; min-width: 180px; max-width: 260px; margin: 0; padding: 4px; font-size: 13px; max-height: calc(100dvh - 16px); overflow: visible; }
+.ctx-menu button.md-option { width: 100%; background: transparent; border: 0; font: inherit; color: inherit; text-align: left; padding: 6px 12px; min-height: 0; }
+.ctx-menu button.md-option { width: 100%; background: transparent; border: 0; font: inherit; color: inherit; text-align: left; }
+.ctx-menu button.md-option:disabled { opacity: 0.55; cursor: default; }
+.ctx-menu button.md-option:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ctx-danger { color: var(--error); }
+.ctx-sep { height: 1px; background: var(--outline-variant); margin: 4px 8px; }
+.ctx-error { color: var(--error); font-size: 13px; padding: 8px 12px; }
 .segmented button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .segmented button svg { flex: none; }
 

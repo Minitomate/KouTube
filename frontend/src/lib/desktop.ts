@@ -262,14 +262,32 @@ export async function playFile(path: string): Promise<void> {
 
 export const YOUTUBE_TERMS_URL = 'https://www.youtube.com/t/terms';
 
-/** Open the YouTube Terms in a browser (desktop opener, plain tab on web). */
-export async function openTerms(): Promise<void> {
+/** Creator socials (verified live). Icons live in components/icons. */
+export interface CreatorLink {
+  id: 'github' | 'youtube' | 'instagram' | 'discord';
+  label: string;
+  url: string;
+}
+export const CREATOR_LINKS: CreatorLink[] = [
+  { id: 'github', label: 'GitHub', url: 'https://github.com/Minitomate' },
+  { id: 'youtube', label: 'YouTube', url: 'https://www.youtube.com/@minitomate' },
+  { id: 'instagram', label: 'Instagram', url: 'https://www.instagram.com/minitomate/' },
+  { id: 'discord', label: 'Discord', url: 'https://discord.gg/T3KNuWu4KB' },
+];
+
+/** Open any external link (desktop opener, plain tab on web). */
+export async function openExternal(url: string): Promise<void> {
   if (isTauri()) {
     const opener = await import('@tauri-apps/plugin-opener');
-    await opener.openUrl(YOUTUBE_TERMS_URL);
+    await opener.openUrl(url);
   } else {
-    window.open(YOUTUBE_TERMS_URL, '_blank', 'noopener');
+    window.open(url, '_blank', 'noopener');
   }
+}
+
+/** Open the YouTube Terms in a browser (desktop opener, plain tab on web). */
+export async function openTerms(): Promise<void> {
+  await openExternal(YOUTUBE_TERMS_URL);
 }
 
 export async function revealFile(path: string): Promise<void> {

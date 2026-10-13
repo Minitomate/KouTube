@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
-import { loadSettings, saveSettings, SEEDS, VARIANTS, type Settings } from '../lib/settings';
+import { loadSettings, patchSettings, SEEDS, VARIANTS, type Settings } from '../lib/settings';
+import { copyDebugLog } from '../lib/debug';
 import { QUALITIES } from '../lib/store';
-import { isTauri, pickFolder, getRecentLogs, openTerms } from '../lib/desktop';
+import { isTauri, pickFolder, getRecentLogs, openTerms, openExternal, CREATOR_LINKS } from '../lib/desktop';
+import { Icon, PATHS } from '../components/icons';
+import Footer from '../components/Footer';
 import { runUpdateCheck, runUpdateDownload, relaunchApp, openReleasesPage, getAppVersion, formatReleaseDate } from '../lib/updater';
 import PreferenceFields from '../components/PreferenceFields';
 import Switch from '../components/Switch';
 
 export default function Settings() {
-  const { set, queue, updateStatus, updateVersion, updateNotes, updatePubDate, updateProgress, updateError } = useStore();
+  const { set, updateStatus, updateVersion, updateNotes, updatePubDate, updateProgress, updateError } = useStore();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [note, setNote] = useState('');
   const [log, setLog] = useState<string[] | null>(null);
@@ -36,9 +39,8 @@ export default function Settings() {
 
   async function update(patch: Partial<Settings>) {
     if (!settings) return;
-    const next = { ...settings, ...patch };
+    const next = await patchSettings(patch);
     setSettings(next);
-    await saveSettings(next);
     if (patch.theme) set({ theme: patch.theme });
     if (patch.seed) set({ seed: patch.seed });
     if (patch.variant) set({ variant: patch.variant });
@@ -58,20 +60,7 @@ export default function Settings() {
 
   async function copyLog() {
     try {
-      const lines: string[] = [];
-      for (const q of queue) {
-        lines.push(`## ${q.title} [${q.status}/${q.stage}]`);
-        for (const l of q.log ?? []) lines.push(`  ${l}`);
-        if (q.error) lines.push(`  error: ${q.error}`);
-      }
-      if (isTauri()) {
-        try {
-          const recent = await getRecentLogs();
-          lines.push('## backend recent');
-          for (const l of recent.slice(-60)) lines.push(`  ${l}`);
-        } catch { /* frontend log alone still helps */ }
-      }
-      await navigator.clipboard.writeText(lines.join('\n') || '(empty log)');
+      await copyDebugLog();
       setNote('Debug log copied.');
     } catch {
       setNote('Could not copy the debug log.');
@@ -244,6 +233,27 @@ export default function Settings() {
         {log && <pre className="log-view">{log.slice(-60).join('\n') || '(empty)'}</pre>}
       </div>
       <div className="card">
+        <h2>Credits</h2>
+        <p className="meta">KouTube is made by Minitomate. Follow along or get support on any of these:</p>
+        <div className="row" style={{ marginTop: 8 }}>
+          {CREATOR_LINKS.map((l) => (
+            <button
+              key={l.id}
+              className="pill-btn tonal"
+              onClick={() => void openExternal(l.url).catch((e) => {
+                console.error('[KouTube] open social failed', l.id, e);
+                setNote(`Could not open the link: ${e instanceof Error ? e.message : String(e)}`);
+              })}
+              aria-label={`${l.label} (opens in browser)`}
+              title={l.label}
+            >
+              <Icon d={PATHS[l.id]} size={18} fill />
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="card">
         <h2>Legal</h2>
         <p className="meta">
           KouTube is for personal, lawful use. Download only videos you own or
@@ -261,6 +271,7 @@ export default function Settings() {
         </div>
       </div>
       {note && <div className="meta" role="note">{note}</div>}
+      <Footer />
     </>
   );
 }

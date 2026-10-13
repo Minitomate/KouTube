@@ -58,7 +58,7 @@ vi.mock('@material/material-color-utilities', () => ({
   },
 }));
 
-import { applyTheme, loadSettings, saveSettings, DEFAULTS, moodRoles, SEEDS, VARIANTS } from './settings';
+import { applyTheme, loadSettings, saveSettings, patchSettings, DEFAULTS, moodRoles, SEEDS, VARIANTS } from './settings';
 
 beforeEach(() => {
   backing.clear();
@@ -113,6 +113,16 @@ describe('settings store', () => {
     expect(reset).toBe(false);
     expect(settings.autoUpdateCheck).toBe(false);
     expect(settings.lastUpdateCheck).toBe(123);
+  });
+
+  it('patches and persists without clobbering the rest', async () => {
+    await saveSettings({ ...DEFAULTS, outDir: '/tmp/keep' });
+    const next = await patchSettings({ seed: '#0061a4' });
+    expect(next.seed).toBe('#0061a4');
+    expect(next.outDir).toBe('/tmp/keep');
+    const { settings } = await loadSettings();
+    expect(settings.seed).toBe('#0061a4');
+    expect(settings.outDir).toBe('/tmp/keep');
   });
 
   it('recovers a corrupt window size without resetting everything', async () => {

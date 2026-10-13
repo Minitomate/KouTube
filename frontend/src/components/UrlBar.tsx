@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { useStore, applyDownloadDefaults } from '../lib/store';
 import { api } from '../lib/api';
@@ -25,6 +25,15 @@ export default function UrlBar() {
   const [draft, setDraft] = useState(url);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Context-menu entry point: Paste & Inspect from anywhere reuses this
+  // bar's own paste flow (clipboard read + auto-inspect). The closure is
+  // safe: paste() only touches stable setters and an explicit target.
+  useEffect(() => {
+    const onPasteInspect = () => void paste();
+    window.addEventListener('koutube:paste-inspect', onPasteInspect);
+    return () => window.removeEventListener('koutube:paste-inspect', onPasteInspect);
+  }, []);
 
   async function inspect(target?: string) {
     const value = (target ?? draft).trim();

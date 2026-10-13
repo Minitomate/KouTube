@@ -87,6 +87,25 @@ async fn get_recent_logs() -> Vec<String> {
     jobs::recent_logs().await
 }
 
+/// Dev-only: open the webview devtools (debug context-menu entry).
+/// Always registered; release builds refuse, so there is zero prod surface.
+#[tauri::command]
+async fn open_devtools(app: AppHandle) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    {
+        use tauri::Manager;
+        app.get_webview_window("main")
+            .ok_or_else(|| "main window not found".to_string())?
+            .open_devtools();
+        return Ok(());
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        Err("devtools are only available in debug builds".to_string())
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -104,7 +123,8 @@ fn main() {
             trash_file,
             existing_outputs,
             get_recent_logs,
-            media::play_file
+            media::play_file,
+            open_devtools
         ])
         .setup(|app| {
             let handle = app.handle().clone();

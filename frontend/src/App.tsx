@@ -8,6 +8,7 @@ import { useStore, resolveTheme, applyDownloadDefaults } from './lib/store';
 import { loadSettings, applyTheme } from './lib/settings';
 import { isTauri } from './lib/desktop';
 import { runUpdateCheck, runUpdateDownload, dismissPendingUpdate, relaunchApp, shouldAutoCheck, formatReleaseDate } from './lib/updater';
+import ContextMenu from './components/ContextMenu';
 
 const qc = new QueryClient();
 
@@ -88,6 +89,7 @@ function Shell() {
         </div>
       )}
       {view === 'home' ? <Home /> : <Settings />}
+      <ContextMenu />
     </div>
   );
 }

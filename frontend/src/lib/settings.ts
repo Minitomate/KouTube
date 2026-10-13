@@ -171,6 +171,15 @@ export async function saveSettings(s: Settings): Promise<void> {
   }
 }
 
+/** Merge a patch into stored settings and persist. Reads fresh so rapid
+ *  successive patches (toggles, menu picks) never clobber each other. */
+export async function patchSettings(patch: Partial<Settings>): Promise<Settings> {
+  const { settings } = await loadSettings();
+  const next = { ...settings, ...patch };
+  await saveSettings(next);
+  return next;
+}
+
 /** Apply seed + variant + theme to CSS vars (full mood, both modes). */
 export function applyTheme(seed: string, theme: 'light' | 'dark', variant: MoodVariant = 'tonal-spot'): void {
   const root = document.documentElement;

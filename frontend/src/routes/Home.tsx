@@ -12,6 +12,7 @@ import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
 import DownloadOptionsCard from '../components/DownloadOptionsCard';
 import QueueView from '../components/QueueView';
+import Footer from '../components/Footer';
 import ThemeToggle from '../components/ThemeToggle';
 import { Icon, PATHS } from '../components/icons';
 
@@ -728,6 +729,7 @@ export default function Home() {
       />
       <div className="field-error" role="alert">{error}</div>
       {warn && <div className="meta" role="note">{warn}</div>}
+      <Footer />
       {overwriteAsk && (
         <Confirm
           title="File already exists"

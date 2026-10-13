@@ -110,12 +110,8 @@ export async function getAppVersion(): Promise<string> {
 
 /** Fallback for package types that can't self-update (deb/rpm) + web. */
 export async function openReleasesPage(): Promise<void> {
-  if (isTauri()) {
-    const opener = await import('@tauri-apps/plugin-opener');
-    await opener.openUrl(RELEASES_URL);
-  } else {
-    window.open(RELEASES_URL, '_blank', 'noopener');
-  }
+  const { openExternal } = await import('./desktop');
+  await openExternal(RELEASES_URL);
 }
 
 function progressPercent(downloaded: number, total: number | null): number | null {

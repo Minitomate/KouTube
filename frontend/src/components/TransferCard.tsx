@@ -85,7 +85,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
     }
   }
   return (
-    <div className="job">
+    <div className="job" data-transfer-id={transferId}>
       <div className="row job-title-row">
         <strong className="job-title">{item.title}</strong>
       </div>
