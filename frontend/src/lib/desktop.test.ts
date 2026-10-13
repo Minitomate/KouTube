@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 const listenMock = vi.fn();
 const openMock = vi.fn();
-const openPathMock = vi.fn();
 const revealMock = vi.fn();
 const openUrlMock = vi.fn();
 
@@ -17,7 +16,6 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: (...args: unknown[]) => openMock(...args),
 }));
 vi.mock('@tauri-apps/plugin-opener', () => ({
-  openPath: (...args: unknown[]) => openPathMock(...args),
   revealItemInDir: (...args: unknown[]) => revealMock(...args),
   openUrl: (...args: unknown[]) => openUrlMock(...args),
 }));
@@ -32,7 +30,6 @@ beforeEach(() => {
   invokeMock.mockReset();
   listenMock.mockReset();
   openMock.mockReset();
-  openPathMock.mockReset();
   revealMock.mockReset();
   openUrlMock.mockReset();
 });
@@ -156,10 +153,9 @@ describe('desktop adapter', () => {
   it('plays, reveals and trashes by exact path', async () => {
     const { playFile, revealFile, trashDownload } = await import('./desktop');
     invokeMock.mockResolvedValue(undefined);
-    openPathMock.mockResolvedValue(undefined);
     revealMock.mockResolvedValue(undefined);
     await playFile('/tmp/v.mp4');
-    expect(openPathMock).toHaveBeenCalledWith('/tmp/v.mp4');
+    expect(invokeMock).toHaveBeenCalledWith('play_file', { path: '/tmp/v.mp4' });
     await revealFile('/tmp/v.mp4');
     expect(revealMock).toHaveBeenCalledWith('/tmp/v.mp4');
     await trashDownload('/tmp/v.mp4');

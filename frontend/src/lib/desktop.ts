@@ -253,8 +253,11 @@ export async function existingOutputs(outDir: string, videoId: string): Promise<
 }
 
 export async function playFile(path: string): Promise<void> {
-  const opener = await import('@tauri-apps/plugin-opener');
-  await opener.openPath(path);
+  // Rust-side `play_file`: validates the path against the download folder,
+  // then opens it with the OS default handler. The JS `open_path` command
+  // stays unused — its static scope cannot cover a user-chosen folder.
+  const { invoke } = await tauri();
+  await invoke('play_file', { path });
 }
 
 export const YOUTUBE_TERMS_URL = 'https://www.youtube.com/t/terms';

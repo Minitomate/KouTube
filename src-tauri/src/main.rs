@@ -9,6 +9,7 @@
 //!   per-chunk `dl://progress` events only move bars.
 
 mod jobs;
+mod media;
 mod tools;
 
 use tauri::{AppHandle, Emitter};
@@ -102,7 +103,8 @@ fn main() {
             cancel_download,
             trash_file,
             existing_outputs,
-            get_recent_logs
+            get_recent_logs,
+            media::play_file
         ])
         .setup(|app| {
             let handle = app.handle().clone();

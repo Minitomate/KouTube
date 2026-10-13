@@ -57,8 +57,10 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       await playFile(item.filepath);
     } catch (e) {
       // Full error to the console for copy-paste; short text on the card.
+      // Tauri rejects invokes with plain strings, not Errors — String(e)
+      // keeps the real reason visible instead of a bare fallback.
       console.error('[KouTube] play failed', item.filepath, e);
-      setActionError(e instanceof Error ? `Could not open the file: ${e.message}` : 'Could not open the file.');
+      setActionError(`Could not open the file: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   async function reveal() {
@@ -67,7 +69,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       await revealFile(item.filepath);
     } catch (e) {
       console.error('[KouTube] reveal failed', item.filepath, e);
-      setActionError(e instanceof Error ? `Could not open the folder: ${e.message}` : 'Could not open the folder.');
+      setActionError(`Could not open the folder: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   async function trash() {

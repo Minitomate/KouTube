@@ -9,9 +9,9 @@
     "dialog:allow-open",
     "dialog:allow-message",
     "clipboard-manager:allow-read-text",
-    "opener:allow-open-path",
     "opener:allow-reveal-item-in-dir",
     "opener:allow-open-url",
+    "opener:allow-default-urls",
     "updater:default",
     "process:default",
     "store:default"

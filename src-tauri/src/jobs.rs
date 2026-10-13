@@ -996,6 +996,12 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                     .get(&job_id)
                     .and_then(|h| h.view.note.clone());
                 let final_path = finalize_file(&spec, done_path).await;
+                // The card's Play button uses this path: log it so a future
+                // "could not open" is one log read away from the truth.
+                blog(format!(
+                    "finalized job={job_id} path={}",
+                    final_path.as_deref().unwrap_or("(none)")
+                ));
                 if spec.captions_only {
                     // Same silent class as audio fallback: a requested lang with
                     // no file must never pass as success.
