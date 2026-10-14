@@ -64,7 +64,7 @@ function Shell() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand" aria-label="KouTube"><LogoIcon />ou<span>Tube</span></div>
+        <div className="brand" aria-label="KouTube"><LogoIcon />Kou<span>Tube</span></div>
         <nav className="row" aria-label={tx('nav.sections')}>
           <button className="pill-btn tonal icon-btn" aria-pressed={view === 'home'} aria-label={tx('nav.home')} title={tx('nav.home')} onClick={() => set({ view: 'home' })}>
             <Icon d={PATHS.home} />
