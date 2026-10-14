@@ -5,7 +5,7 @@ import {
 import { Icon, PATHS } from './icons';
 import SingleDropdown from './SingleDropdown';
 
-const FORMAT_ICON = { video: PATHS.video, audio: PATHS.audio, captions: PATHS.captions } as const;
+const FORMAT_ICON = { video: PATHS.play, audio: PATHS.audio, captions: PATHS.captions } as const;
 
 /** Full download-preference fieldset, controlled. The card binds it to the
  * store (advanced groups gated by the toggle); Settings binds it to the

@@ -381,6 +381,10 @@ async fn finish(app: &AppHandle, job_id: &str, view: JobView) {
 /// Sidecar spawn: on Windows, console-subsystem children (yt-dlp, and the
 /// ffmpeg it forks) must not pop a console window. Built on std first so the
 /// flag API is guaranteed, then converted for tokio.
+/// UTF-8 is forced on the child pipes: without a console, Windows Python
+/// falls back to the system codepage (cp1252), and a single unencodable
+/// character in a printed title (emoji, CJK, …) kills yt-dlp with
+/// `OSError: [Errno 22]` while the raw bytes break our pipe readers.
 fn sidecar_command(program: &std::path::Path) -> tokio::process::Command {
     #[cfg(windows)]
     {
@@ -388,6 +392,8 @@ fn sidecar_command(program: &std::path::Path) -> tokio::process::Command {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut std_cmd = std::process::Command::new(program);
         std_cmd.creation_flags(CREATE_NO_WINDOW);
+        std_cmd.env("PYTHONUTF8", "1");
+        std_cmd.env("PYTHONIOENCODING", "utf-8");
         tokio::process::Command::from(std_cmd)
     }
     #[cfg(not(windows))]
@@ -793,6 +799,23 @@ fn audio_quality_flag(
     } else {
         None
     }
+}
+
+/// Pipe bytes → log line: lossy UTF-8 (one bad byte degrades to U+FFFD and
+/// must never fail a job) with the trailing newline stripped, mirroring
+/// `BufRead::lines`. None marks an empty read (EOF / dead pipe: end drain).
+fn pipe_line(buf: &[u8]) -> Option<String> {
+    if buf.is_empty() {
+        return None;
+    }
+    let mut s = String::from_utf8_lossy(buf).into_owned();
+    if s.ends_with('\n') {
+        s.pop();
+    }
+    if s.ends_with('\r') {
+        s.pop();
+    }
+    Some(s)
 }
 
 fn build_args(app: &AppHandle, spec: &DownloadSpec, print_file: &str) -> Result<Vec<String>> {
@@ -1237,9 +1260,18 @@ async fn run_once(
         let n_err = n_err.clone();
         let job_id_task = job_id.to_string();
         tauri::async_runtime::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
+            let mut reader = BufReader::new(stderr);
+            let mut buf = Vec::new();
             let mut shown = 0u8;
-            while let Some(l) = lines.next_line().await.unwrap_or(None) {
+            loop {
+                buf.clear();
+                // Lossy: a bad byte ends the chunk, never the drain (the
+                // strict `lines()` it replaced reported EOF here instead).
+                match reader.read_until(b'\n', &mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => (),
+                };
+                let Some(l) = pipe_line(&buf) else { break };
                 let now = Instant::now();
                 *last_io.lock().await = now;
                 *last_out.lock().await = now;
@@ -1259,15 +1291,21 @@ async fn run_once(
         });
     }
 
-    let mut reader = BufReader::new(stdout).lines();
+    let mut reader = BufReader::new(stdout);
     let mut merging = false;
     let mut logged_unparsed = false;
     // Raw stdout sample: first 3 lines per job, so a silent card can be
     // traced to pipe content (template mismatch, \r-bundling, empty pipe).
     let mut raw_logged = 0u8;
     let mut n_out: u64 = 0;
+    let mut buf = Vec::new();
     loop {
-        let line = tokio::time::timeout(Duration::from_secs(1), reader.next_line()).await;
+        buf.clear();
+        let line = tokio::time::timeout(
+            Duration::from_secs(1),
+            reader.read_until(b'\n', &mut buf),
+        )
+        .await;
         match line {
             Err(_) => {
                 // 1s tick: watchdog check without blocking output.
@@ -1333,8 +1371,10 @@ async fn run_once(
                 }
                 continue;
             }
-            Ok(Ok(None)) => break, // EOF
-            Ok(Ok(Some(l))) => {
+            Ok(Ok(0)) | Ok(Err(_)) => break, // EOF / dead pipe: exit status decides
+            Ok(Ok(_)) => {
+                // buf is non-empty here; lossy decode replaces, never fails.
+                let Some(l) = pipe_line(&buf) else { break };
                 *last_out.lock().await = Instant::now();
                 n_out += 1;
                 if raw_logged < 3 {
@@ -1434,7 +1474,6 @@ async fn run_once(
                     .await;
                 }
             }
-            Ok(Err(e)) => return Err(anyhow!("output read: {e}")),
         }
     }
     let status = child.wait().await?;
@@ -1550,6 +1589,20 @@ fn parse_progress(line: &str) -> Option<(f64, Option<String>, Option<String>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pipe_line_survives_bad_bytes() {
+        // Clean lines pass through with the newline stripped.
+        assert_eq!(pipe_line(b"[download] 45% of 10MiB\n"), Some("[download] 45% of 10MiB".to_string()));
+        assert_eq!(pipe_line(b"tail without newline"), Some("tail without newline".to_string()));
+        assert_eq!(pipe_line(b"win line\r\n"), Some("win line".to_string()));
+        // Lone 0x85 is U+2026 (…) in cp1252 but invalid UTF-8: it degrades
+        // to U+FFFD instead of failing the read (the Windows pipe bug).
+        assert_eq!(pipe_line(b"UGREEN\x85 boom\n"), Some("UGREEN� boom".to_string()));
+        assert_eq!(pipe_line(b"\xff\xfe\n"), Some("��".to_string()));
+        // Empty read marks EOF.
+        assert_eq!(pipe_line(b""), None);
+    }
 
     #[test]
     fn pb_line_parses_bytes_and_falls_back_to_estimate() {
