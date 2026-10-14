@@ -10,9 +10,9 @@ export default function LogoIcon({ size = 22 }: { size?: number }) {
       focusable="false"
     >
       <rect width="512" height="512" rx="120" fill="#6750A4" />
-      <g transform="translate(256 276) scale(0.62 1) rotate(-90) translate(-8 0)" fill="none" stroke="#FFFFFF" strokeWidth={56} strokeLinecap="round" strokeLinejoin="round">
+      <g transform="translate(256 276) scale(1 1) rotate(-90) translate(-8 0)" fill="none" stroke="#FFFFFF" strokeWidth={56} strokeLinecap="round" strokeLinejoin="round">
         <path d="M-40 -140 V140" />
-        <path d="M92 -128 L-20 0 L92 128" />
+        <path d="M128 -128 L-20 0 L128 128" />
       </g>
     </svg>
   );
