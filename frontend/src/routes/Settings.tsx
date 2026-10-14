@@ -47,6 +47,7 @@ export default function Settings() {
     if (patch.seed) set({ seed: patch.seed });
     if (patch.variant) set({ variant: patch.variant });
     if (patch.locale) set({ locale: patch.locale });
+    if (patch.showThumbnails !== undefined) set({ showThumbnails: patch.showThumbnails });
   }
 
   async function chooseFolder() {
@@ -235,6 +236,9 @@ export default function Settings() {
               {v.label}
             </button>
           ))}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <Switch checked={settings.showThumbnails} onChange={() => void update({ showThumbnails: !settings.showThumbnails })} label={t('set.showThumbs')} />
         </div>
       </div>
       <div className="card">

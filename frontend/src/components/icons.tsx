@@ -1,9 +1,10 @@
-/** Shared inline icons (no new dep): 24px, currentColor, decorative. */
+/** Shared inline icons (no new dep): 24px, currentColor, decorative.
+ * Stroke matches LogoIcon's round, bold K (56/512 → ~2.6 at 24px). */
 export function Icon({ d, size = 20, fill = false }: { d: string; size?: number; fill?: boolean }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false"
       fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'}
-      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
       <path d={d} />
     </svg>
   );

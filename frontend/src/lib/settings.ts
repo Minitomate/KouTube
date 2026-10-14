@@ -31,6 +31,7 @@ export const SettingsSchema = z.object({
   variant: z.enum(['tonal-spot', 'vibrant', 'expressive']).default('tonal-spot'),
   maxConcurrent: z.number().int().min(1).max(8).default(4),
   showAdvanced: z.boolean().default(false),
+  showThumbnails: z.boolean().default(true),
   autoUpdateCheck: z.boolean().default(true),
   // Last successful update check (epoch ms); null = never checked.
   lastUpdateCheck: z.number().int().nonnegative().nullable().default(null).catch(null),

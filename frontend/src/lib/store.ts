@@ -15,6 +15,8 @@ export interface Transfer {
   status: TransferStatus; error?: string;
   stage: TransferStage; note?: string; rid?: string;
   filepath?: string;
+  /** Low-res video thumb (mqdefault) for the card; absent for batch rows. */
+  thumbnail?: string | null;
   /** What is downloading (badge) + human detail (language, quality). */
   kind?: TransferKind; detail?: string;
   /** Epoch ms when stage last became processing (elapsed clock). */
@@ -144,6 +146,10 @@ interface State {
   captionsFormat: CaptionsFormat;
   audioTracks: string[];
   captions: string[];
+  /** Master toggle for all thumbnail images (default on). */
+  showThumbnails: boolean;
+  /** Selected playlist videoIds (all checked by default on inspect). */
+  selectedVideos: string[];
   queue: Transfer[];
   theme: 'light' | 'dark' | 'auto';
   locale: LocaleSetting;
@@ -162,6 +168,8 @@ interface State {
   set: (p: Partial<State>) => void;
   toggleCaption: (id: string) => void;
   toggleAudioTrack: (id: string) => void;
+  toggleSelectedVideo: (id: string) => void;
+  selectAllVideos: (ids: string[]) => void;
   upsertTransfer: (t: Transfer) => void;
 }
 
@@ -205,6 +213,8 @@ export const useStore = create<State>((set) => ({
   captionsFormat: 'srt',
   audioTracks: [],
   captions: [],
+  selectedVideos: [],
+  showThumbnails: true,
   queue: [],
   theme: 'auto',
   locale: readLocaleSettingSync(),
@@ -233,10 +243,19 @@ export const useStore = create<State>((set) => ({
         ? s.audioTracks.filter((c) => c !== id)
         : [...s.audioTracks, id],
     })),
+  toggleSelectedVideo: (id) =>
+    set((s) => ({
+      selectedVideos: s.selectedVideos.includes(id)
+        ? s.selectedVideos.filter((v) => v !== id)
+        : [...s.selectedVideos, id],
+    })),
+  selectAllVideos: (ids) => set({ selectedVideos: [...ids] }),
   upsertTransfer: (t) =>
     set((s) => ({
       queue: s.queue.some((q) => q.id === t.id)
-        ? s.queue.map((q) => (q.id === t.id ? { ...q, ...t } : q))
+        // Thumbnail never changes per transfer: keep the enqueued one across
+        // status transitions whose patches omit it.
+        ? s.queue.map((q) => (q.id === t.id ? { ...q, ...t, thumbnail: t.thumbnail ?? q.thumbnail } : q))
         : [...s.queue.slice(-49), t], // cap batch at 50
     })),
 }));

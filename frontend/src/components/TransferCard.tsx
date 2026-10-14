@@ -16,6 +16,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
   const [confirmTrash, setConfirmTrash] = useState(false);
   const [actionError, setActionError] = useState('');
   const [, setTick] = useState(0);
+  const showThumbs = useStore((s) => s.showThumbnails);
   const alive = item?.status === 'working' && item.stage === 'processing';
   useEffect(() => {
     if (!alive) return;
@@ -86,17 +87,33 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       setActionError(t('transfer.trashFailed'));
     }
   }
+  const working = item.status === 'working';
   return (
     <div className="job" data-transfer-id={transferId}>
+      {working && (
+        <div
+          className={`job-fill${indeterminate ? ' indeterminate' : ''}`}
+          role="progressbar"
+          {...(pct === null ? {} : { 'aria-valuenow': pct })}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={t('transfer.progress', { title: item.title })}
+          style={pct === null || indeterminate ? undefined : { width: `${pct}%` }}
+        />
+      )}
+      <div className="job-body">
       <div className="row job-title-row">
+        {showThumbs && item.thumbnail && (
+          <img className="job-thumb" src={item.thumbnail} alt="" loading="lazy" decoding="async" />
+        )}
         <strong className="job-title">{item.title}</strong>
+        <button className="pill-btn text" style={{ minHeight: 32, marginLeft: 'auto' }} aria-label={t('transfer.remove', { title: item.title })} onClick={() => onRemove(transferId)}>
+          ✕
+        </button>
       </div>
       <div className="row job-meta-row">
         {badge && <span className="chip tonal" aria-label={t('transfer.downloadType', { badge })}>{badge}</span>}
         <span className="meta job-status">{statusMeta}</span>
-        <button className="pill-btn text" style={{ minHeight: 32 }} aria-label={t('transfer.remove', { title: item.title })} onClick={() => onRemove(transferId)}>
-          ✕
-        </button>
       </div>
       {showStats && (
         <div className="row job-stats">
@@ -114,16 +131,6 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
           </span>
         </div>
       )}
-      <div
-        className={`progress-pill${indeterminate ? ' indeterminate' : ''}`}
-        role="progressbar"
-        {...(pct === null ? {} : { 'aria-valuenow': pct })}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={t('transfer.progress', { title: item.title })}
-      >
-        <div style={pct === null ? undefined : { width: `${pct}%` }} />
-      </div>
       {item.error && <div className="field-error" role="alert">{item.error}</div>}
       {actionError && <div className="field-error" role="alert">{actionError}</div>}
       {done && item.filepath && isTauri() && (
@@ -155,6 +162,7 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
           )}
         </details>
       )}
+      </div>
     </div>
   );
 }

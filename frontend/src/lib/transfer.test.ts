@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { planParts, PART_BYTES, fmtBytes, fmtClock, kindBadge, statusLine, splitStats, throttleLatest, stableETA, makeRateTracker } from './transfer';
+import { planParts, PART_BYTES, fmtBytes, fmtClock, kindBadge, statusLine, splitStats, throttleLatest, stableETA, makeRateTracker, aggregateBatch, itemPercent } from './transfer';
 
 describe('planParts', () => {
   it('tiles exactly with a clipped tail', () => {
@@ -189,5 +189,21 @@ describe('fmtClock', () => {
     expect(fmtClock(65)).toBe('1:05');
     expect(fmtClock(3665)).toBe('1:01:05');
     expect(fmtClock(NaN)).toBe('');
+  });
+});
+
+describe('aggregateBatch', () => {
+  it('counts done-only and means known per-item pcts', () => {
+    expect(itemPercent({ status: 'working', loaded: 50, total: 100 })).toBe(50);
+    expect(itemPercent({ status: 'working', loaded: 0, total: null, percent: 25 })).toBe(25);
+    expect(itemPercent({ status: 'done', loaded: 0, total: null })).toBe(100);
+    expect(itemPercent({ status: 'working', loaded: 0, total: null })).toBeNull();
+    const agg = aggregateBatch([
+      { status: 'done', loaded: 100, total: 100 },
+      { status: 'working', loaded: 50, total: 100 },
+      { status: 'working', loaded: 0, total: null },
+    ]);
+    expect(agg).toEqual({ done: 1, total: 3, pct: 75 });
+    expect(aggregateBatch([])).toEqual({ done: 0, total: 0, pct: null });
   });
 });

@@ -67,10 +67,10 @@ export default function UrlBar() {
           return;
         }
         const media = await desktopResolve(value);
-        set({ url: value, media, step: 1, audioTracks: defaultAudio(media), ...(await loadDefaults()) });
+        set({ url: value, media, step: 1, audioTracks: defaultAudio(media), selectedVideos: (media.entries ?? []).map((e) => e.videoId), ...(await loadDefaults()) });
       } else {
         const media = await api.resolve(value);
-        set({ url: value, media, step: 1, audioTracks: defaultAudio(media), ...(await loadDefaults()) });
+        set({ url: value, media, step: 1, audioTracks: defaultAudio(media), selectedVideos: (media.entries ?? []).map((e) => e.videoId), ...(await loadDefaults()) });
       }
     } catch {
       setError(inspectFailedMessage(isTauri(), lang));

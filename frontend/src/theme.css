@@ -161,20 +161,26 @@ body {
 .cta-label { position: relative; z-index: 1; }
 
 .sticky-cta {
-  position: fixed; left: 0; right: 0; bottom: 16px;
+  position: fixed; left: 0; right: 0; bottom: 16px; z-index: 30;
   display: flex; justify-content: center; pointer-events: none;
 }
 .sticky-cta > div { pointer-events: auto; display: flex; gap: 8px; background: var(--surface-container-high); padding: 8px; border-radius: 999px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); }
 .empty { color: var(--on-surface-variant); font-size: 14px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .meta { font-size: 13px; color: var(--on-surface-variant); }
-.job { border-top: 1px solid var(--outline-variant); padding: 10px 12px; border-radius: 12px; background: var(--surface-container-high); transition: background-color 0.45s ease; }
+.job { border-top: 1px solid var(--outline-variant); padding: 10px 12px; border-radius: 12px; background: var(--surface-container-high); transition: background-color 0.45s ease; overflow: clip; position: relative; }
 .job:hover { background: color-mix(in srgb, var(--primary) 12%, var(--surface-container-high)); }
+/* Card-embedded progress: tint fill behind the content, like the CTA fill. */
+.job-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: color-mix(in srgb, var(--primary) 14%, transparent); pointer-events: none; }
+.job-fill.indeterminate { width: 30%; animation: bar-slide 1.2s ease-in-out infinite; }
+.job-body { position: relative; z-index: 1; }
+.job-thumb { width: 72px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; flex: none; background: var(--surface-container-high); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 .inspect-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 @media (min-width: 860px) {
-  .inspect-grid { grid-template-columns: 1fr 1fr; align-items: start; }
+  .inspect-grid { grid-template-columns: minmax(0, 640px) 1fr; justify-content: start; align-items: start; }
+  .inspect-grid > :first-child { min-width: 0; }
 }
 .thumb-wrap { position: relative; border-radius: 16px; overflow: hidden; background: var(--surface-container-high); aspect-ratio: 16 / 9; }
 .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -198,6 +204,7 @@ fieldset.field { border: 0; padding: 0; }
   .sk { animation: none; }
   .progress-pill > div { transition: none; }
   .progress-pill.indeterminate > div { animation: none; }
+  .job-fill.indeterminate { animation: none; }
   .thumb-wrap img { transition: none; }
   .pill-btn, .chip, .segmented button, .switch-thumb, .md-panel, .desc-box, .job,
   body, .card, .urlbar input, .select-pill { transition: none; }
@@ -259,11 +266,11 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
   background: var(--surface-container-high); border-radius: 12px; padding: 10px 12px;
   white-space: pre-wrap;
 }
-.queue-grid .queue-cards { display: grid; gap: 4px; }
+.queue-grid .queue-cards { display: flex; flex-direction: column; gap: 4px; max-height: 70vh; overflow-y: auto; }
 @media (min-width: 860px) {
-  .queue-cards { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
   .queue-cards .job { border: 1px solid var(--outline-variant); border-radius: 16px; padding: 12px; }
 }
+.queue-cards .job { min-height: 118px; }
 
 /* Icon-only buttons: fixed 44px target, svg inherits color. */
 .icon-btn { width: 44px; min-height: 44px; padding: 0; flex: none; aspect-ratio: 1; border-radius: 50%; }
@@ -323,7 +330,9 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 /* Transfer card: title on its own row, meta columns below. */
 .job-title-row { margin-bottom: 6px; }
 .job-meta-row { margin-bottom: 8px; }
-.job-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.job-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; overflow-wrap: anywhere; }
+.job-meta-row .job-status { overflow-wrap: anywhere; }
+.field-error { overflow-wrap: anywhere; }
 .job-meta-row { justify-content: flex-start; }
 .job-meta-row .job-status { flex: 1; }
 .job-meta-row .pill-btn.text { margin-left: auto; }
@@ -338,3 +347,22 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
 /* Disabled mode / dropdown (no manual captions). */
 .segmented button:disabled { opacity: 0.45; cursor: not-allowed; }
 .md-button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Playlist preview: index + 100px thumb + title/byline rows. */
+.pl-list { display: flex; flex-direction: column; gap: 8px; max-height: 480px; overflow-y: auto; margin-top: 12px; background: var(--surface-container-low); border: 1px solid transparent; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18); border-radius: 20px; padding: 6px; }
+.pl-row { display: flex; gap: 10px; align-items: center; padding: 6px; border-radius: 12px; }
+.pl-index { width: 24px; text-align: center; color: var(--on-surface-variant); font-size: 13px; flex: none; }
+.pl-thumb-wrap { position: relative; width: 100px; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--surface-container-high); flex: none; }
+.pl-thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pl-meta { min-width: 0; }
+.pl-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* Playlist cover stack: YouTube-style sheets peeking above the thumbnail. */
+.pl-cover-stack { position: relative; margin-top: 14px; }
+.pl-cover-stack::before, .pl-cover-stack::after {
+  content: ''; position: absolute; border-radius: 12px;
+  background: var(--primary-container);
+}
+.pl-cover-stack::before { top: -6px; left: 18px; right: 18px; height: 12px; opacity: 0.8; }
+.pl-cover-stack::after { top: -12px; left: 32px; right: 32px; height: 12px; opacity: 0.5; }
+.pl-cover-stack .thumb-wrap { position: relative; z-index: 1; }

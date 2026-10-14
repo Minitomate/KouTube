@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { MediaInfo } from '../lib/api';
 import { localeTag, t, type Locale } from '../lib/i18n';
-import { useLocale } from '../lib/store';
+import { useLocale, useStore } from '../lib/store';
 
 export function fmtCount(n?: number | null): string {
   if (n === undefined || n === null) return '';
@@ -57,6 +57,7 @@ const VERIFIED_CHECK =
 /** Left column: YouTube-recommendation-style video + channel info. */
 export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   const { lang, t: tx } = useLocale();
+  const showThumbs = useStore((s) => s.showThumbnails);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [avatarRaw, setAvatarRaw] = useState(false);
   const [thumbLoaded, setThumbLoaded] = useState(false);
@@ -104,8 +105,8 @@ export default function VideoInfoCard({ media }: { media: MediaInfo }) {
   return (
     <div className="card">
       <div className="thumb-wrap">
-        {!thumbLoaded && <div className="sk sk-fill" aria-hidden="true" />}
-        {idle && media.thumbnail && (
+        {showThumbs && !thumbLoaded && <div className="sk sk-fill" aria-hidden="true" />}
+        {showThumbs && idle && media.thumbnail && (
           <img
             src={media.thumbnail} alt="" loading="lazy"
             decoding="async" className={thumbLoaded ? 'img-ready' : 'img-waiting'}

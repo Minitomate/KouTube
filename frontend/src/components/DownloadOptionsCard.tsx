@@ -15,7 +15,11 @@ export default function DownloadOptionsCard() {
   const heights = qualities.filter((q) => q !== 'best');
   const max = heights.length ? heights[heights.length - 1] : null;
   const tracks = media?.audioTracks ?? [];
-  const caps = (media?.captions ?? []).filter((c) => c.manual);
+  // Playlist resolve carries no caption tracks: offer a short fixed list so
+  // captions mode stays usable (applied per selected video at download).
+  const caps = media?.isPlaylist
+    ? [{ id: 'en', label: 'en', lang: 'en', manual: true }, { id: 'es', label: 'es', lang: 'es', manual: true }]
+    : (media?.captions ?? []).filter((c) => c.manual);
   const hasMedia = media != null && !media.isPlaylist;
   const noCaps = hasMedia && caps.length === 0;
 

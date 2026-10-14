@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 export interface AudioTrack { id: string; label: string; lang?: string; original?: boolean }
 export interface CaptionTrack { id: string; label: string; lang: string; manual: boolean }
-export interface PlaylistEntry { videoId: string; title: string }
+export interface PlaylistEntry { videoId: string; title: string; duration?: number | null; thumbnail?: string | null }
 export interface MediaInfo {
   videoId?: string;
   title: string; duration: number; thumbnail?: string;
@@ -50,6 +50,8 @@ const BackendResolve = z.object({
   is_playlist: z.boolean().default(false),
   entries: z.array(z.object({
     videoId: z.string(), title: z.string().default(''),
+    duration: z.number().nullable().optional(),
+    thumbnail: z.string().nullable().optional(),
   })).default([]),
 });
 
@@ -101,7 +103,7 @@ export function normalizeMedia(raw: unknown): MediaInfo {
     ].sort((a, b2) => a.lang.localeCompare(b2.lang) || Number(b2.manual) - Number(a.manual)),
     isPlaylist: b.is_playlist,
     playlistCount: b.entries.length || undefined,
-    entries: b.entries.map((e) => ({ videoId: e.videoId, title: e.title })),
+    entries: b.entries.map((e) => ({ videoId: e.videoId, title: e.title, duration: e.duration ?? null, thumbnail: e.thumbnail ?? null })),
   };
 }
 export interface JobEvent { progress: number; status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'; error?: string; file?: string }

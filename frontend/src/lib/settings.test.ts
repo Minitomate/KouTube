@@ -94,6 +94,7 @@ describe('settings store', () => {
 
   it('defaults the new fields on old stores', () => {
     expect(DEFAULTS.showAdvanced).toBe(false);
+    expect(DEFAULTS.showThumbnails).toBe(true);
     expect(DEFAULTS.windowSize).toBeNull();
     expect(DEFAULTS.downloadDefaults.format).toBe('video');
     expect(DEFAULTS.maxConcurrent).toBe(4);

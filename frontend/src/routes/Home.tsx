@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import pLimit from 'p-limit';
 import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, useLocale, type Transfer, type AudioQuality } from '../lib/store';
 import { api } from '../lib/api';
-import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, fmtClock, makeRateTracker, splitStats, throttleLatest, tagFilename, srtFilename, subsUrl, saveBlob } from '../lib/transfer';
+import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, fmtClock, makeRateTracker, splitStats, throttleLatest, tagFilename, srtFilename, subsUrl, saveBlob, aggregateBatch } from '../lib/transfer';
 import { captionLabel } from '../lib/lang';
 import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
 import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
@@ -10,16 +10,16 @@ import Confirm from '../components/Confirm';
 import UrlBar from '../components/UrlBar';
 import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
+import PlaylistPreviewCard from '../components/PlaylistPreviewCard';
 import DownloadOptionsCard from '../components/DownloadOptionsCard';
 import QueueView from '../components/QueueView';
 import Footer from '../components/Footer';
 import ThemeToggle from '../components/ThemeToggle';
 import { Icon, PATHS } from '../components/icons';
-
-const ZIP_CAP = 10;
+import { selectedEntries, playlistThumbLow } from '../lib/playlist';
 
 export default function Home() {
-  const { url, media, inspecting, format, quality, container, codec, audioContainer, audioCodec, audioQuality, captionsFormat, audioTracks, captions, set, upsertTransfer, queue, online } = useStore();
+  const { url, media, inspecting, format, quality, container, codec, audioContainer, audioCodec, audioQuality, captionsFormat, audioTracks, captions, selectedVideos, set, upsertTransfer, queue, online } = useStore();
   const { lang, t } = useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -141,6 +141,9 @@ export default function Home() {
     let cont: string = format === 'audio' ? (desktop ? audioContainer : 'mp3') : container;
     let q = quality;
     const au = resolveAudio(audioContainer, audioCodec, audioQuality);
+    if (media?.isPlaylist && (media.entries?.length ?? 0) > 0 && selectedVideos.length === 0) {
+      return { quality: q, container: cont, notes, blocked: t('playlist.noneSelected'), audioCodec: au.codec, audioQuality: null };
+    }
     if (format === 'captions') {
       if (captions.length === 0) {
         return { quality: q, container: 'srt', notes, blocked: t('plan.noCaptions'), audioCodec: au.codec, audioQuality: null };
@@ -175,12 +178,13 @@ export default function Home() {
     return undefined;
   }
 
-  async function downloadSingle(pageUrl: string, title: string, audioLang?: string, transferId?: string) {
+  async function downloadSingle(pageUrl: string, title: string, audioLang?: string, transferId?: string, videoId?: string) {
     // Pre-created id when the caller enqueued upfront; else mint one here.
     const id = transferId ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const rid = Math.random().toString(36).slice(2) + Date.now().toString(36);
     const lang = audioLang ?? audioTracks[0] ?? 'original';
     const kind = format as 'video' | 'audio';
+    const thumbnail = videoId ? playlistThumbLow(videoId) : undefined;
     const stage = (st: 'downloading' | 'processing', note?: string) => {
       const cur = useStore.getState().queue.find((q) => q.id === id);
       if (cur && cur.status === 'working') upsertTransfer({
@@ -191,7 +195,7 @@ export default function Home() {
     const ctl = new AbortController();
     abortRefs.current.add(ctl);
     try {
-      upsertTransfer({ id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', rid, kind, detail: kindDetail(kind, lang) });
+      upsertTransfer({ id, title, loaded: 0, total: null, status: 'working', stage: 'preparing', rid, kind, detail: kindDetail(kind, lang), thumbnail });
       const plan = planDownload();
       if (plan.notes.length) setWarn(plan.notes.join(' '));
       const p = await prepare({ url: pageUrl, container: format, outputContainer: plan.container, quality: plan.quality, codec, audioTrack: lang, captions: format === 'audio' ? [] : captions, subFormat: captionsFormat });
@@ -229,7 +233,10 @@ export default function Home() {
               }
             }
           } });
-      upsertTransfer({ id, title: filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done', stage: 'end', rid });
+      const cur = useStore.getState().queue.find((q) => q.id === id);
+      if (!cur || cur.status === 'working') {
+        upsertTransfer({ id, title: filename, loaded: p.sizeEstimate ?? 0, total: p.sizeEstimate, status: 'done', stage: 'end', rid });
+      }
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
         upsertTransfer({ id, title, loaded: 0, total: null, status: 'cancelled', stage: 'end', rid });
@@ -259,14 +266,16 @@ export default function Home() {
       return;
     }
     setBusy(true);
+    batchCancelled.current = false;
     try {
       const max = await concurrency();
       if (format === 'captions') {
         await downloadSubs();
       } else if (media?.isPlaylist && media.entries?.length) {
-        const items = media.entries.slice(0, ZIP_CAP);
-        if (media.entries.length > ZIP_CAP) {
-          setError(t('home.zipCap', { cap: ZIP_CAP, n: media.entries.length }));
+        const items = selectedEntries(media.entries, selectedVideos);
+        if (!items.length) {
+          setError(t('playlist.noneSelected'));
+          return;
         }
         // Multi-track audio: one prepared file per (video, language).
         const langs = format === 'audio' && audioTracks.length > 1
@@ -279,11 +288,15 @@ export default function Home() {
           id: `zip-${k}`, title: c.e.title || c.e.videoId,
           loaded: 0, total: null, status: 'working', stage: 'preparing',
           kind: comboKind, detail: kindDetail(comboKind, c.lang),
+          thumbnail: playlistThumbLow(c.e.videoId),
         }));
         const zipItems: { id: string; filename: string; url: string; sizeEstimate: number | null }[] = [];
         const noCaps = format === 'audio' ? [] : captions;
         await pool(combos.map((c, k) => async () => {
-          if (batchCancelled.current) return;
+          if (batchCancelled.current) {
+            upsertTransfer({ id: `zip-${k}`, title: c.e.title || c.e.videoId, loaded: 0, total: null, status: 'cancelled', stage: 'end', thumbnail: playlistThumbLow(c.e.videoId) });
+            return;
+          }
           const id = `zip-${k}`;
           const pageUrl = `https://www.youtube.com/watch?v=${c.e.videoId}`;
           try {
@@ -337,13 +350,17 @@ export default function Home() {
           id, title, loaded: 0, total: null,
           status: 'working', stage: 'preparing',
           kind: 'audio' as const, detail: audioTracks[k],
+          thumbnail: media?.videoId ? playlistThumbLow(media.videoId) : undefined,
         }));
         await pool(audioTracks.map((lang, k) => async () => {
-          if (batchCancelled.current) return;
-          await downloadSingle(url, title, lang, ids[k]);
+          if (batchCancelled.current) {
+            upsertTransfer({ id: ids[k], title, loaded: 0, total: null, status: 'cancelled', stage: 'end', kind: 'audio' as const, detail: audioTracks[k], thumbnail: media?.videoId ? playlistThumbLow(media.videoId) : undefined });
+            return;
+          }
+          await downloadSingle(url, title, lang, ids[k], media?.videoId);
         }), max);
       } else {
-        await downloadSingle(url, media?.title ?? url);
+        await downloadSingle(url, media?.title ?? url, undefined, undefined, media?.videoId);
       }
       set({ step: 2 });
     } catch (e) {
@@ -358,13 +375,14 @@ export default function Home() {
   async function downloadSubs() {
     const videos: { pageUrl: string; title: string; videoId?: string }[] =
       media?.isPlaylist && media.entries?.length
-        ? media.entries.slice(0, ZIP_CAP).map((e) => ({
+        ? selectedEntries(media.entries, selectedVideos).map((e) => ({
           pageUrl: `https://www.youtube.com/watch?v=${e.videoId}`,
           title: e.title || e.videoId, videoId: e.videoId,
         }))
         : [{ pageUrl: url, title: media?.title ?? url, videoId: media?.videoId }];
-    if (media?.isPlaylist && (media.entries?.length ?? 0) > ZIP_CAP) {
-      setError(t('home.zipCap', { cap: ZIP_CAP, n: media.entries?.length ?? 0 }));
+    if (media?.isPlaylist && !videos.length) {
+      setError(t('playlist.noneSelected'));
+      return;
     }
     const zipItems = videos.flatMap((v, i) => captions.map((sel, j) => {
       const auto = sel.startsWith('auto:');
@@ -375,13 +393,14 @@ export default function Home() {
         url: subsUrl(v.pageUrl, lang, captionsFormat, auto),
         sizeEstimate: null as number | null,
         detail: auto ? `${lang} (auto)` : lang,
+        videoId: v.videoId,
       };
     }));
     if (zipItems.length === 1) {
       const it = zipItems[0];
       const id = `${Date.now()}-sub`;
       const lang = it.detail;
-      upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'downloading', kind: 'captions', detail: lang });
+      upsertTransfer({ id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'downloading', kind: 'captions', detail: lang, thumbnail: it.videoId ? playlistThumbLow(it.videoId) : undefined });
       const subCtl = new AbortController();
       abortRefs.current.add(subCtl);
       // Stream the body so bytes/speed show every second instead of a frozen bar.
@@ -432,7 +451,7 @@ export default function Home() {
     abortRefs.current.add(zipCtl);
     setCanCancel(true);
     for (const it of zipItems) {
-      upsertTransfer({ id: it.id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'preparing', kind: 'captions', detail: captions.map((c) => captionLabel(c)).join(', ') });
+      upsertTransfer({ id: it.id, title: it.filename, loaded: 0, total: null, status: 'working', stage: 'preparing', kind: 'captions', detail: captions.map((c) => captionLabel(c)).join(', '), thumbnail: it.videoId ? playlistThumbLow(it.videoId) : undefined });
     }
     try {
       await downloadZip(
@@ -472,6 +491,13 @@ export default function Home() {
       import('../lib/desktop').then((d) =>
         Promise.all(ids.map((jid) => d.cancelDesktopDownload(jid).catch(() => {}))),
       );
+    }
+    // Rows already render from the store: flip leftovers now so neither
+    // button appears to do nothing while in-flight jobs wind down.
+    for (const q of useStore.getState().queue) {
+      if (q.status === 'working') {
+        upsertTransfer({ ...q, status: 'cancelled', stage: 'end' });
+      }
     }
   }
 
@@ -532,6 +558,16 @@ export default function Home() {
     const finish = (t: Transfer, line: string) => {
       applyProgress.cancel();
       const cur = useStore.getState().queue.find((q) => q.id === transferId);
+      // A user cancel wins over a late sidecar terminal event.
+      if (cur?.status === 'cancelled' && t.status !== 'cancelled') {
+        desktopJobs.current.delete(transferId);
+        rateSamples.current.delete(transferId);
+        pctSamples.current.delete(transferId);
+        clearInterval(alive);
+        if (!useStore.getState().queue.some((q) => q.status === 'working')) setBusy(false);
+        stopFn(); resolveRef.current?.();
+        return;
+      }
       upsertTransfer(tlog({ ...(cur ?? blankTransfer(transferId, title)), ...t }, line));
       desktopJobs.current.delete(transferId);
       rateSamples.current.delete(transferId);
@@ -570,6 +606,8 @@ export default function Home() {
       },
       outDir,
       (e) => {
+        const cur = useStore.getState().queue.find((q) => q.id === transferId);
+        if (cur?.status === 'cancelled' && e.status !== 'cancelled') return;
         const m = mapDesktopEvent(e);
         if (m.kind === 'done') {
           finish({ id: transferId, title: e.title ?? title, loaded: 100, total: 100, status: 'done', stage: 'end', note: e.note ?? undefined, filepath: e.filepath ?? undefined }, 'event: done');
@@ -646,7 +684,11 @@ export default function Home() {
       const videoDetail = kindDetail('video', undefined, plan.quality, plan.container);
       const capDetail = captions.map((c) => captionLabel(c)).join(', ') || undefined;
       if (media?.isPlaylist && media.entries?.length) {
-        const items = media.entries.slice(0, ZIP_CAP);
+        const items = selectedEntries(media.entries, selectedVideos);
+        if (!items.length) {
+          setError(t('playlist.noneSelected'));
+          return;
+        }
         items.forEach((e, i) => {
           const pageUrl = `https://www.youtube.com/watch?v=${e.videoId}`;
           const title = e.title || e.videoId;
@@ -671,10 +713,13 @@ export default function Home() {
       }
       // Enqueue everything upfront so batch progress is visible at once.
       for (const t of tasks) {
-        upsertTransfer({ ...tlog(blankTransfer(t.id, t.title), 'queued'), kind: t.kind, detail: t.detail });
+        upsertTransfer({ ...tlog(blankTransfer(t.id, t.title), 'queued'), kind: t.kind, detail: t.detail, thumbnail: t.extra.videoId ? playlistThumbLow(t.extra.videoId) : undefined });
       }
       await pool(tasks.map((task) => async () => {
-        if (batchCancelled.current) return;
+        if (batchCancelled.current) {
+          upsertTransfer({ ...blankTransfer(task.id, task.title), kind: task.kind, detail: task.detail, status: 'cancelled', stage: 'end', thumbnail: task.extra.videoId ? playlistThumbLow(task.extra.videoId) : undefined });
+          return;
+        }
         try {
           await downloadDesktopOne(task.pageUrl, task.title, outDir, task.id, task.extra);
         } catch (err) {
@@ -688,6 +733,27 @@ export default function Home() {
     }
   }
 
+  // Batch-wide CTA aggregate: done count, mean per-item pct, summed speed.
+  // Samples ride on queue-driven renders (4Hz while working); byteRate needs
+  // no extra ticker and stays silent until two samples span the window.
+  const batchSamples = useRef<Array<{ t: number; p: number }>>([]);
+  useEffect(() => {
+    if (!busy) {
+      batchSamples.current = [];
+      return;
+    }
+    const sum = useStore.getState().queue.reduce((a, q) => a + (q.loaded || 0), 0);
+    batchSamples.current = [...batchSamples.current, { t: Date.now(), p: sum }].slice(-30);
+  });
+  const agg = busy && queue.length ? aggregateBatch(queue) : null;
+  const ctaPct = agg?.pct ?? 0;
+  const batchSpeed = busy ? byteRate(batchSamples.current, Date.now()) : null;
+  const playlistLabel = media?.isPlaylist ? (isTauri() ? t('home.download') : t('home.downloadZip')) : t('home.download');
+  const ctaBusy = agg !== null;
+  const ctaLabel = ctaBusy
+    ? `${agg.done}/${agg.total} · ${ctaPct}%${batchSpeed !== null ? ` · ${fmtRate(batchSpeed)}` : ''}`
+    : playlistLabel;
+
   return (
     <>
       <UrlBar />
@@ -700,19 +766,11 @@ export default function Home() {
           </div>
         </div>
       )}
-      {media?.isPlaylist && (
-        <div className="card banner-card">
-          <h2>{media.title}</h2>
-          <div className="meta">{t('home.playlist', {
-            n: media.playlistCount ?? 0,
-            mode: isTauri() ? t('home.modeFiles', { cap: ZIP_CAP }) : t('home.modeZip', { cap: ZIP_CAP }),
-          })}</div>
-        </div>
-      )}
       <div className="inspect-grid">
         <div>
           {inspecting && <MediaSkeleton />}
           {!inspecting && media && !media.isPlaylist && <VideoInfoCard media={media} />}
+          {!inspecting && media?.isPlaylist && <PlaylistPreviewCard media={media} />}
           {!inspecting && !media && (
             <div className="card"><p className="empty">{t('home.empty')}</p></div>
           )}
@@ -726,13 +784,13 @@ export default function Home() {
         })}
         onCancelAll={() => {
           cancel();
-          set({
-            queue: useStore.getState().queue.filter((q) => !['done', 'error', 'cancelled'].includes(q.status)),
-          });
         }}
       />
       <div className="field-error" role="alert">{error}</div>
       {warn && <div className="meta" role="note">{warn}</div>}
+      {media?.isPlaylist && selectedVideos.length === 0 && !busy && (
+        <div className="meta" role="note">{t('playlist.noneSelected')}</div>
+      )}
       <Footer />
       {overwriteAsk && (
         <Confirm
@@ -746,20 +804,13 @@ export default function Home() {
       )}
       <div className="sticky-cta">
         <div>
-          <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url} aria-label={media?.isPlaylist ? t('home.downloadZip') : t('home.download')}>
-            {(() => {
-              const active = queue.find((q) => q.status === 'working');
-              if (!busy || !active) return media?.isPlaylist ? t('home.downloadZip') : t('home.download');
-              const raw = active.total ? Math.round((active.loaded / active.total) * 100) : null;
-              const pct = raw === null ? null : Math.min(100, raw);
-              const label = pct === null ? (active.note ?? t('home.working')) : `${pct}%${active.note ? ` · ${active.note}` : ''}`;
-              return (
-                <>
-                  {pct !== null && <span className="cta-fill" style={{ width: `${pct}%` }} aria-hidden="true" />}
-                  <span className="cta-label">{label}</span>
-                </>
-              );
-            })()}
+          <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url || (media?.isPlaylist === true && selectedVideos.length === 0)} aria-label={ctaLabel}>
+            {ctaBusy ? (
+              <>
+                <span className="cta-fill" style={{ width: `${ctaPct}%` }} aria-hidden="true" />
+                <span className="cta-label">{ctaLabel}</span>
+              </>
+            ) : ctaLabel}
           </button>
           {busy && canCancel && (
             <button className="pill-btn outlined" onClick={cancel} aria-label={t('home.cancelDownload')}>

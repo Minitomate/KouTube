@@ -413,13 +413,13 @@ pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
     validate_url(url)?;
     let flat = is_playlist_url(url);
     let mut cmd = sidecar_command(&ytdlp);
-    cmd.args(["--dump-json", "--no-warnings", "--socket-timeout", "15"]);
     if flat {
-        cmd.args(["--flat-playlist", "--playlist-end", "50"]);
+        cmd.args(["--dump-single-json", "--flat-playlist", "--playlist-end", "50",
+            "--no-warnings", "--socket-timeout", "15"]);
     } else {
-        cmd.arg("--no-playlist");
+        cmd.args(["--dump-json", "--no-playlist", "--no-warnings", "--socket-timeout", "15"]);
     }
-    cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::piped());
     let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
         .await
         .map_err(|_| {
@@ -427,10 +427,14 @@ pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
             anyhow!("resolve timed out after 60s")
         })??;
     if !out.status.success() {
-        blog(format!("resolve failed url={}", short_url(url)));
+        blog(format!("resolve failed url={} stderr={}", short_url(url), stderr_tail(&out.stderr)));
         return Err(anyhow!("resolve failed"));
     }
-    let info: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    let info: serde_json::Value = parse_resolve_stdout(&out.stdout)
+        .map_err(|e| {
+            blog(format!("resolve parse failed url={} err={e}", short_url(url)));
+            anyhow!("resolve failed")
+        })?;
     let avatar = fetch_avatar(
         &ytdlp,
         info.get("uploader_url")
@@ -512,15 +516,53 @@ async fn fetch_avatar_inner(ytdlp: &std::path::Path, channel_url: &str) -> Optio
     thumbs.into_iter().next().map(|(_, url)| url)
 }
 
-/// Log-safe URL: host + video id only, never tokens or full query strings.
+/// Log-safe URL: host + video/list id only, never tokens or full query strings.
+fn query_value(url: &str, key: &str) -> Option<String> {
+    let i = url.find(key)?;
+    let rest = &url[i + key.len()..];
+    let v = rest.split('&').next().unwrap_or("").split('#').next().unwrap_or("");
+    if v.is_empty() { None } else { Some(v.to_string()) }
+}
+
 fn short_url(url: &str) -> String {
-    let id = url
-        .split("v=")
-        .nth(1)
-        .and_then(|s| s.split('&').next())
-        .unwrap_or("?");
     let host = url.split('/').nth(2).unwrap_or("?");
+    if let Some(list) = query_value(url, "list=") {
+        return format!("{host} list={list}");
+    }
+    let id = query_value(url, "v=").unwrap_or_else(|| "?".to_string());
     format!("{host} v={id}")
+}
+
+/// Last ~300 chars of child stderr for the backend log (never full output).
+fn stderr_tail(stderr: &[u8]) -> String {
+    let s = String::from_utf8_lossy(stderr);
+    let s = s.trim();
+    if s.len() <= 300 { s.to_string() } else { s[s.len() - 300..].to_string() }
+}
+
+/// Playlist-safe stdout parse: single JSON first (--dump-single-json), then
+/// NDJSON fallback (one object per line) synthesized into a playlist shape.
+fn parse_resolve_stdout(stdout: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
+    match serde_json::from_slice(stdout) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            let mut entries = vec![];
+            for line in stdout.split(|b| *b == b'\n') {
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(line) {
+                    if v.get("id").and_then(|id| id.as_str()).is_some() {
+                        entries.push(v);
+                    }
+                }
+            }
+            if entries.is_empty() {
+                return Err(e);
+            }
+            Ok(serde_json::json!({"_type": "playlist", "title": "Playlist", "entries": entries}))
+        }
+    }
 }
 
 fn validate_url(url: &str) -> Result<String> {
@@ -541,6 +583,33 @@ fn validate_url(url: &str) -> Result<String> {
 
 /// Same shape as the old /api/resolve so the frontend normalizer is reused,
 /// plus channel metadata for the info card.
+/// Playlist cover: scalar thumbnail, else thumbnails[0], else first entry.
+fn playlist_thumbnail(info: &serde_json::Value) -> Option<String> {
+    if let Some(url) = info.get("thumbnail").and_then(|v| v.as_str()) {
+        return Some(url.to_string());
+    }
+    if let Some(url) = info
+        .get("thumbnails")
+        .and_then(|t| t.as_array())
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("url"))
+        .and_then(|u| u.as_str())
+    {
+        return Some(url.to_string());
+    }
+    let first = info
+        .get("entries")
+        .and_then(|e| e.as_array())
+        .and_then(|a| a.iter().find(|e| e.get("id").and_then(|id| id.as_str()).is_some()))?;
+    if let Some(url) = first.get("thumbnail").and_then(|v| v.as_str()) {
+        return Some(url.to_string());
+    }
+    first
+        .get("id")
+        .and_then(|id| id.as_str())
+        .map(|id| format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))
+}
+
 fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> serde_json::Value {
     if info.get("_type").and_then(|v| v.as_str()) == Some("playlist")
         || info.get("entries").is_some()
@@ -562,9 +631,13 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
                 }))
             })
             .collect();
+        let cover = playlist_thumbnail(info);
         return serde_json::json!({
             "videoId": null, "title": info.get("title").and_then(|v| v.as_str()).unwrap_or("Playlist"),
-            "thumbnail": info.get("thumbnail"), "duration": null,
+            "thumbnail": cover, "duration": null,
+            "description": info.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+            "channel": info.get("channel").or_else(|| info.get("uploader")),
+            "channelUrl": info.get("channel_url").or_else(|| info.get("uploader_url")),
             "formats": [], "audioTracks": [], "manualCaptions": [], "autoCaptions": [],
             "is_playlist": true, "entries": entries,
         });
@@ -2038,6 +2111,75 @@ mod tests {
             tracks[1].get("is_original").unwrap(),
             &serde_json::json!(false)
         );
+    }
+
+    #[test]
+    fn playlist_keeps_channel_and_preview_fields() {
+        let info = serde_json::json!({
+            "_type": "playlist", "title": "AI Tools",
+            "channel": "Alex Ziskind", "uploader_url": "https://www.youtube.com/@AZisk",
+            "entries": [
+                { "id": "bYpdCFz7VtA", "title": "Faster agents", "duration": 947,
+                  "thumbnail": "https://i.ytimg.com/vi/bYpdCFz7VtA/hqdefault.jpg" },
+                { "id": "9nKwDzsaAII", "title": "Supercomputers" },
+            ],
+        });
+        let payload = build_resolve_payload(&info, None);
+        assert_eq!(payload.get("is_playlist").unwrap(), &serde_json::json!(true));
+        assert_eq!(payload.get("channel").unwrap(), &serde_json::json!("Alex Ziskind"));
+        let entries = payload.get("entries").unwrap().as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].get("duration").unwrap(), &serde_json::json!(947));
+        assert!(entries[1].get("duration").is_none() || entries[1].get("duration").unwrap().is_null());
+    }
+
+    #[test]
+    fn short_url_shows_list_id_for_playlists() {
+        assert_eq!(
+            short_url("https://www.youtube.com/playlist?list=PLPwbI_iIX3aTYccwug0CY9WdUfpChrEwC"),
+            "www.youtube.com list=PLPwbI_iIX3aTYccwug0CY9WdUfpChrEwC"
+        );
+        assert_eq!(
+            short_url("https://www.youtube.com/watch?v=bYpdCFz7VtA&list=PLPwbI_iIX3aTYccwug0CY9WdUfpChrEwC"),
+            "www.youtube.com list=PLPwbI_iIX3aTYccwug0CY9WdUfpChrEwC"
+        );
+        assert_eq!(
+            short_url("https://www.youtube.com/watch?v=bYpdCFz7VtA"),
+            "www.youtube.com v=bYpdCFz7VtA"
+        );
+    }
+
+    #[test]
+    fn resolve_stdout_parses_single_then_ndjson() {
+        let single = br#"{"_type":"playlist","title":"AI Tools","entries":[{"id":"a"}]}"#;
+        let v = parse_resolve_stdout(single).unwrap();
+        assert_eq!(v.get("entries").unwrap().as_array().unwrap().len(), 1);
+        // NDJSON fallback: one video object per line.
+        let ndjson = b"{\"id\":\"a\",\"title\":\"one\"}\n{\"id\":\"b\",\"title\":\"two\"}\n";
+        let v = parse_resolve_stdout(ndjson).unwrap();
+        let entries = v.get("entries").unwrap().as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(parse_resolve_stdout(b"not json").is_err());
+    }
+
+    #[test]
+    fn playlist_cover_prefers_thumbnails_array_then_first_entry() {
+        assert_eq!(
+            playlist_thumbnail(&serde_json::json!({"thumbnail": "https://img/cover.jpg", "entries": []})),
+            Some("https://img/cover.jpg".to_string())
+        );
+        assert_eq!(
+            playlist_thumbnail(&serde_json::json!({
+                "thumbnails": [{"url": "https://i.ytimg.com/vi/bYpdCFz7VtA/hqdefault.jpg"}],
+                "entries": [],
+            })),
+            Some("https://i.ytimg.com/vi/bYpdCFz7VtA/hqdefault.jpg".to_string())
+        );
+        assert_eq!(
+            playlist_thumbnail(&serde_json::json!({"entries": [{"id": "bYpdCFz7VtA"}]})),
+            Some("https://i.ytimg.com/vi/bYpdCFz7VtA/hqdefault.jpg".to_string())
+        );
+        assert_eq!(playlist_thumbnail(&serde_json::json!({"entries": []})), None);
     }
 }
 

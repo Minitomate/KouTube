@@ -101,6 +101,28 @@ export interface StatusView {
   error?: string;
 }
 
+export interface BatchItem {
+  status: string;
+  loaded: number;
+  total: number | null;
+  percent?: number | null;
+}
+
+/** Per-item percent mirroring TransferCard: bytes first, percent fallback, done is 100. */
+export function itemPercent(it: BatchItem): number | null {
+  if (it.total) return Math.min(100, Math.max(0, Math.round((it.loaded / it.total) * 100)));
+  if (it.status === 'done') return 100;
+  return it.percent ?? null;
+}
+
+/** Queue-wide aggregate: done count, item count, mean of known per-item pcts. */
+export function aggregateBatch(items: BatchItem[]): { done: number; total: number; pct: number | null } {
+  const total = items.length;
+  const done = items.filter((i) => i.status === 'done').length;
+  const pcts = items.map(itemPercent).filter((p): p is number => p !== null);
+  return { done, total, pct: pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : null };
+}
+
 /** Card status line: stage label + bytes (X/Y when known) + speed/ETA note. */
 export function statusLine(view: StatusView, elapsed: string | null, locale: Locale = 'en'): string {
   if (view.status === 'done') return view.note ? `${t(locale, 'status.saved')} · ${view.note}` : t(locale, 'status.saved');

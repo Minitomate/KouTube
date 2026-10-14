@@ -179,6 +179,24 @@ def channel_fields(info: dict) -> dict:
     }
 
 
+def pick_playlist_thumbnail(info: dict) -> str | None:
+    """Playlist cover: scalar thumbnail, else thumbnails[0], else first entry."""
+    if info.get("thumbnail"):
+        return info.get("thumbnail")
+    thumbs = info.get("thumbnails") or []
+    if thumbs and isinstance(thumbs, list) and thumbs[0].get("url"):
+        return thumbs[0]["url"]
+    entries = info.get("entries") or []
+    first = next((e for e in entries if e), None)
+    if not first:
+        return None
+    if first.get("thumbnail"):
+        return first.get("thumbnail")
+    if first.get("id"):
+        return f"https://i.ytimg.com/vi/{first['id']}/hqdefault.jpg"
+    return None
+
+
 def build_resolve_payload(info: dict, avatar: str | None = None) -> dict:
     if info.get("_type") == "playlist" or "entries" in info:
         entries: list[PlaylistEntry] = []
@@ -193,8 +211,11 @@ def build_resolve_payload(info: dict, avatar: str | None = None) -> dict:
         return {
             "videoId": None,
             "title": info.get("title") or "Playlist",
-            "thumbnail": info.get("thumbnail"),
+            "thumbnail": pick_playlist_thumbnail(info),
             "duration": None,
+            "description": info.get("description") or "",
+            "channel": info.get("channel") or info.get("uploader"),
+            "channelUrl": info.get("channel_url") or info.get("uploader_url"),
             "formats": [], "audioTracks": [], "manualCaptions": [],
             "is_playlist": True, "entries": entries,
         }

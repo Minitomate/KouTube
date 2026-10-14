@@ -20,6 +20,7 @@ function Shell() {
     loadSettings().then(({ settings, reset }) => {
       set({ theme: settings.theme, seed: settings.seed, variant: settings.variant, locale: settings.locale });
       set({ showAdvanced: settings.showAdvanced });
+      set({ showThumbnails: settings.showThumbnails });
       set(applyDownloadDefaults(settings.downloadDefaults));
       if (reset) console.warn('settings reset to defaults');
     });
