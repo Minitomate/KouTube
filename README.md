@@ -8,12 +8,12 @@
 
 ## Download
 
-Get the latest release for your system here:
+**[KouTube latest release](https://github.com/Minitomate/KouTube/releases/latest)**
 
-**[⬇ Download KouTube (latest release)](https://github.com/Minitomate/KouTube/releases/latest)**
+Direct downloads:
 
-- **Linux:** AppImage (runs anywhere), `.deb`, `.rpm`
-- **Windows:** installer (`setup.exe`) and `.msi`
+- **Linux:** [AppImage](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_amd64.AppImage) (runs anywhere) · [.deb](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_amd64.deb) · [.rpm](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube-1.1.0-1.x86_64.rpm)
+- **Windows:** [installer](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_x64-setup.exe) · [.msi](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_x64_en-US.msi)
 
 The desktop app checks for updates once a day on launch and can install them in-app (AppImage and Windows installer; `.deb`/`.rpm` point at the releases page instead).
 
@@ -47,15 +47,22 @@ Aggregate floating progress (done/total · % · combined speed), working cancel-
 
 ![Downloading queue](docs/screenshots/04-queue.png)
 
-### Your defaults and settings
+### Settings
 
-Saved format/quality/container/codec defaults, max concurrent downloads, dark/light/auto Material themes, English/Spanish UI that follows your system, a thumbnail on/off toggle, and a debug log you can copy or save.
+Everything tunable in one place:
 
-![Settings](docs/screenshots/05-settings.png)
+- Download defaults (format, quality, containers, codecs) applied on every Inspect
+- Max concurrent downloads with a stepper
+- Light, dark, and auto themes with accent colors and style variants
+- English/Spanish UI that follows your system, with manual override
+- Thumbnail on/off toggle
+- Debug log you can copy or save to a file
+
+![Appearance settings](docs/screenshots/05-appearance.png)
 
 ### Extras
 
-Offline banner, right-click context menu, update banner + Settings card.
+Offline banner, right-click context menu, update banner.
 
 ## Development
 
