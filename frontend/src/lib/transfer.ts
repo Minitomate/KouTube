@@ -687,6 +687,9 @@ export async function downloadToDisk(
 
   // Main: direct-first probe → parallel parts when possible → sequential.
   // Mux URLs skip probing (a probe would run the server merge twice).
+  // A picked save-file holding a partial is discarded via abort() unless the
+  // fetch stage completed; the blob fallback never persists anything.
+  let completed = false;
   try {
     const { base } = await chooseBase();
     let known = sizeEstimate;
@@ -704,10 +707,16 @@ export async function downloadToDisk(
     } else {
       await fetchSequential(base);
     }
+    completed = true;
   } finally {
     stopPoll();
     progressTo.cancel();
     rateTo?.cancel();
+    if (!completed && writable) {
+      try {
+        await writable.abort();
+      } catch { /* already closed or never written */ }
+    }
   }
   if (writable) {
     await writable.close();

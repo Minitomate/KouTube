@@ -1079,9 +1079,35 @@ fn randish() -> u64 {
     (t ^ (std::process::id() as u128)) as u64
 }
 
+/// Terminal failure/cancel: remove this job's temp fragments so no partial
+/// sits in the download folder. Scoped to the job's `[video_id]` tag and to
+/// temp suffixes only; complete media/subs and every other stem are untouched.
+fn cleanup_partials(out_dir: &str, video_id: &str) {
+    const TEMP_ENDS: [&str; 4] = [".part", ".temp", ".tmp", ".ytdl"];
+    let tag = format!("[{video_id}]");
+    let Ok(entries) = std::fs::read_dir(out_dir) else { return };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = match p.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if !name.contains(&tag) {
+            continue;
+        }
+        if TEMP_ENDS.iter().any(|e| name.ends_with(e)) {
+            let _ = std::fs::remove_file(&p);
+            blog(format!("cleaned partial {}", p.display()));
+        }
+    }
+}
+
 async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
     for attempt in 0..=MAX_RETRIES {
         if is_cancelled(&job_id).await {
+            if let Some(id) = spec.video_id.as_deref() {
+                cleanup_partials(&spec.out_dir, id);
+            }
             return;
         }
         match run_once(&app, &job_id, &spec, attempt).await {
@@ -1160,9 +1186,15 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
             }
             Err(e) => {
                 if is_cancelled(&job_id).await {
+                    if let Some(id) = spec.video_id.as_deref() {
+                        cleanup_partials(&spec.out_dir, id);
+                    }
                     return;
                 }
                 if attempt == MAX_RETRIES {
+                    if let Some(id) = spec.video_id.as_deref() {
+                        cleanup_partials(&spec.out_dir, id);
+                    }
                     finish(
                         &app,
                         &job_id,
@@ -1406,6 +1438,9 @@ async fn run_once(
                 if is_cancelled(job_id).await {
                     kill_tree(job_id).await;
                     let _ = child.wait().await;
+                    if let Some(id) = spec.video_id.as_deref() {
+                        cleanup_partials(&spec.out_dir, id);
+                    }
                     finish(
                         app,
                         job_id,
@@ -2131,6 +2166,33 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].get("duration").unwrap(), &serde_json::json!(947));
         assert!(entries[1].get("duration").is_none() || entries[1].get("duration").unwrap().is_null());
+    }
+
+    #[test]
+    fn cleanup_partials_removes_only_job_temps() {
+        let dir =
+            std::env::temp_dir().join(format!("koutube-test-cleanup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("Title [abc].mp4.part"), "p").unwrap();
+        std::fs::write(dir.join("Title [abc].mp4.temp"), "p").unwrap();
+        std::fs::write(dir.join("Title [abc].fmkv.tmp"), "p").unwrap();
+        std::fs::write(dir.join("Title [abc].ytdl"), "p").unwrap();
+        // Complete outputs and other stems must survive.
+        std::fs::write(dir.join("Title [abc].mp4"), "full").unwrap();
+        std::fs::write(dir.join("Title [abc].en.srt"), "subs").unwrap();
+        std::fs::write(dir.join("Other [zzz].mp4.part"), "p").unwrap();
+        std::fs::write(dir.join("notes.txt"), "n").unwrap();
+        cleanup_partials(&dir.to_string_lossy(), "abc");
+        assert!(!dir.join("Title [abc].mp4.part").exists());
+        assert!(!dir.join("Title [abc].mp4.temp").exists());
+        assert!(!dir.join("Title [abc].fmkv.tmp").exists());
+        assert!(!dir.join("Title [abc].ytdl").exists());
+        assert!(dir.join("Title [abc].mp4").exists());
+        assert!(dir.join("Title [abc].en.srt").exists());
+        assert!(dir.join("Other [zzz].mp4.part").exists());
+        assert!(dir.join("notes.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
