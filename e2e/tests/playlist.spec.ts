@@ -38,7 +38,7 @@ test.describe('playlist batch (single ZIP, user-end)', () => {
     await app.goto();
     await app.inspectUrl(PLAYLIST);
     await app.downloadZip();
-    await expect(page.getByRole('progressbar').first()).toBeVisible();
+    await expect(page.locator('.job').first()).toBeVisible();
     await expect(page.getByText('saved ✓').first()).toBeVisible();
   });
 

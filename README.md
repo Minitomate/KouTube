@@ -19,46 +19,47 @@ The desktop app checks for updates once a day on launch and can install them in-
 
 On first launch the app fetches its tools (`yt-dlp` + `ffmpeg`, one-time download) and then works fully offline-capable — everything runs on your machine.
 
+## How it works
+
+1. **Paste** a YouTube link and press Inspect.
+2. **Pick** video, audio-only, or captions-only plus quality, container, and languages.
+3. **Download** — files land in your folder (desktop) or as a ZIP (web).
+
+The desktop app drives `yt-dlp`/`ffmpeg` locally; the web fallback relays bytes through the bundled backend without storing anything server-side.
+
 ## Features
 
-- **Three download modes** — full video, audio-only, or captions-only (subtitle files, no media)
-- **Video options** — quality up to 4K, container (MP4/WebM/MKV), codec (AVC/HEVC/VP9/AV1)
-- **Audio options** — container (MP3/M4A/Opus/WAV/FLAC), codec, bitrate; original-language detection with multi-track dubs
-- **Captions** — manual tracks only (auto-generated are never listed), SRT or VTT, embedded or sidecar
-- **Batch queue** — playlists and multi-track picks download together, with a tunable concurrency limit, live progress (MB + speed), overwrite confirmation, and Play / Show-in-folder actions
-- **Your defaults** — save preferred format, quality, containers, and codecs; collapse the rest behind *Show advanced settings*
-- **Speaks your language** — English and Spanish UI that follows your system language automatically, with a manual override in Settings → Language
-- **Extras** — offline banner, dark/light/auto Material themes, right-click context menu, update banner + Settings card, debug log you can copy or save to a file
+### Inspect any video
+
+Thumbnail, duration, channel, views, and description next to the download options — quality up to 4K, containers MP4/WebM/MKV, codecs AVC/HEVC/VP9/AV1.
+
+![Inspected video](docs/screenshots/02-video-inspected.png)
+
+### Playlists with per-video picking
+
+Cover art, expandable checklist with durations, select-all default, and batches paced by your Settings concurrency — per-file downloads on desktop, one ZIP on web. Audio mode covers dubs and multi-track picks; captions mode offers manual tracks (SRT/VTT, embedded or sidecar).
+
+![Expanded playlist checklist](docs/screenshots/03-playlist.png)
+
+### Live download queue
+
+Aggregate floating progress (done/total · % · combined speed), working cancel-all, background-fill cards with lightweight thumbnails, and overwrite confirmation with Play / Show-in-folder actions.
+
+![Downloading queue](docs/screenshots/04-queue.png)
+
+### Your defaults and settings
+
+Saved format/quality/container/codec defaults, max concurrent downloads, dark/light/auto Material themes, English/Spanish UI that follows your system, a thumbnail on/off toggle, and a debug log you can copy or save.
+
+![Settings](docs/screenshots/05-settings.png)
+
+### Extras
+
+Offline banner, right-click context menu, update banner + Settings card.
 
 ## Development
 
-**Stack:** React + Vite + TypeScript + Zustand (frontend) · Rust + Tauri sidecar core driving `yt-dlp`/`ffmpeg` (desktop) · Python + FastAPI relay backend (web fallback).
-
-```bash
-# project setup (creates a local .venv, no sudo)
-bash scripts/setup.sh
-source .venv/bin/activate
-
-# desktop app (primary)
-cargo tauri dev
-
-# web fallback: backend + frontend in two terminals
-make backend            # uvicorn app.main:app --port 8000 (from backend/)
-cd frontend && npm install && npm run dev -- --port 5173
-```
-
-**Tests** (everything must stay green):
-
-```bash
-cd frontend && npx vitest run        # unit
-cd src-tauri && cargo test           # sidecar
-./.venv/bin/pytest backend -q        # relay backend
-cd e2e && npx playwright test        # end-to-end + a11y
-```
-
-Project layout: `frontend/src` (UI), `src-tauri/src` (`jobs.rs` downloads, `tools.rs` setup), `backend/app` (resolve/prepare/stream/mux/subs API), `e2e/tests` (Playwright incl. axe checks).
-
-Releases are manual: test, approve, then run the **Release** workflow (Actions → Release → Run workflow with a version like `v0.1.0`). It attaches the artifacts to a **draft** release — publish the draft by hand after testing.
+Full setup, architecture, tests, and release process live in [DEVELOPMENT.md](./DEVELOPMENT.md).
 
 ## Legal
 

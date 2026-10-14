@@ -15,19 +15,17 @@ Requires `ffmpeg` on PATH for merge/embed.
 
 ## API
 
-- `POST /api/resolve {url}` → title, thumbnail, duration, formats,
-  audioTracks (grouped by language, first = original default),
-  manualCaptions (**only** `info['subtitles']`, never `automatic_captions`, `live_chat` excluded),
-  is_playlist + entries (max 50).
-- `POST /api/download {url|videoId, container, quality, audioTrackLang, embedCaptions[], separateCaptions, subFormat}` → `{jobId, batchId}`.
-  Format: `bestvideo[height<=Q]+bestaudio/best`; outtmpl `%(title)s [%(id)s].%(ext)s` sanitized to 120 chars.
+- `POST /api/resolve {url}` → video metadata (title, thumbnail, duration, formats,
+  audioTracks grouped by language with original detection, manualCaptions **only**)
+  or a playlist (`is_playlist` + up to 50 flat entries with duration/thumbnail).
   Only `youtube.com` / `youtu.be` / `music.youtube.com` (SSRF allowlist).
-- `GET /api/jobs/{id}` status · `GET /api/jobs/{id}/events` SSE progress
-  (`queued/downloading/merging/postprocessing/done/error` + `percent`, explicit `done` event).
-- `GET /api/files/{id}` download with `Content-Disposition` (traversal-guarded).
+- `POST /api/prepare {url, container, quality, codec, audioTrackLang, embedCaptions[], subFormat}` → `{filename, mergeRequired, sizeEstimate, streamToken, muxToken?, videoUrl?, audioUrl?}` (direct upstream URLs when usable).
+- `GET /api/stream?token=` → proxied bytes (ranged, resumable).
+- `GET /api/mux?token=` → server-merged output; `GET /api/mux-progress?rid=` staging ticks.
+- `GET /api/subs?url=&lang=&fmt=[srt|vtt][&auto=1]` → subtitle text.
 - `GET /api/health` → yt-dlp + ffmpeg versions.
 
-Queue: asyncio, concurrency 3, 2GB disk cap, 24h TTL cleanup (apscheduler).
+Requires `ffmpeg` on PATH for merge/embed. Filenames are sanitized to 120 chars.
 
 ## Test
 

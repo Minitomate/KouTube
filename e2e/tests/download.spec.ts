@@ -44,7 +44,7 @@ test.describe('download (user-end)', () => {
     await app.pickFormat('video');
     await app.pickQuality('720');
     await app.download();
-    await expect(page.getByRole('progressbar')).toBeVisible();
+    await expect(page.locator('.job')).toBeVisible();
     await expect(page.getByText('saved ✓')).toBeVisible();
     expect(posted).toMatchObject({ quality: '720', container: 'mp4' });
   });
@@ -86,8 +86,8 @@ test.describe('download (user-end)', () => {
     await app.goto();
     await app.inspectUrl(URL);
     await app.download();
-    const bar = page.getByRole('progressbar');
-    await expect(bar).toBeVisible();
+    const bar = page.locator('.job-fill');
+    await expect(bar).toBeAttached();
     await expect(bar).toHaveClass(/indeterminate/);
     expect(await bar.getAttribute('aria-valuenow')).toBeNull();
     await expect(page.getByText('Downloading', { exact: false }).first()).toBeVisible();
@@ -209,7 +209,8 @@ test.describe('stall recovery (user-end)', () => {
     await app.inspectUrl(URL);
     await app.download();
     await expect(page.getByText('saved ✓')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+    // Fill clears on finish (no frozen bar left behind).
+    await expect(page.locator('.job-fill')).toHaveCount(0);
   });
 
   test('staging numbers surface rate and ETA', async ({ page }) => {

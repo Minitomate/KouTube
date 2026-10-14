@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
+  testIgnore: 'screenshots.spec.ts',
   fullyParallel: true,
   retries: process.env.CI ? 2 : 1,
   reporter: [['list'], ['html', { open: 'never' }]],
