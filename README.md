@@ -12,8 +12,8 @@
 
 Direct downloads:
 
-- **Linux:** [AppImage](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_amd64.AppImage) (runs anywhere) · [.deb](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_amd64.deb) · [.rpm](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube-1.1.0-1.x86_64.rpm)
-- **Windows:** [installer](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_x64-setup.exe) · [.msi](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.0_x64_en-US.msi)
+- **Linux:** [AppImage](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_amd64.AppImage) (runs anywhere) · [.deb](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_amd64.deb) · [.rpm](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube-1.1.1-1.x86_64.rpm)
+- **Windows:** [installer](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_x64-setup.exe) · [.msi](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_x64_en-US.msi)
 
 The desktop app checks for updates once a day on launch and can install them in-app (AppImage and Windows installer; `.deb`/`.rpm` point at the releases page instead).
 
