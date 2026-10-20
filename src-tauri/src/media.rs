@@ -64,6 +64,14 @@ fn download_root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 pub async fn play_file(app: AppHandle, path: String) -> Result<(), String> {
     let root = download_root(&app)?;
     let target = validate_play_path(&root, std::path::Path::new(&path))?;
+    // The desktop opener plugin only handles URLs on Android: route the file
+    // through our FileProvider instead (system chooser/player).
+    #[cfg(target_os = "android")]
+    {
+        return crate::android_engine::open_file(&target.to_string_lossy())
+            .map_err(|e| e.to_string());
+    }
+    #[cfg(not(target_os = "android"))]
     tauri_plugin_opener::open_path(&target, None::<&str>).map_err(|e| e.to_string())
 }
 

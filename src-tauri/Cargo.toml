@@ -5,6 +5,11 @@ description = "KouTube - compact local YouTube downloader"
 edition = "2021"
 rust-version = "1.77"
 
+# Mobile (lib) + desktop (bin) targets; Android builds the cdylib.
+[lib]
+name = "koutube_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -24,10 +29,19 @@ futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "stream"] }
 nix = { version = "0.29", features = ["process", "signal", "fs"] }
 anyhow = "1"
-trash = "5"
 zip = "2"
 tar = "0.4"
 xz2 = { version = "0.1", features = ["static"] }
+
+# No OS trash concept on Android; trash_file falls back to a plain delete.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+trash = "5"
+
+# Android runs yt-dlp through the bundled youtubedl-android library: Kotlin
+# bridge reached over JNI instead of spawning a sidecar.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

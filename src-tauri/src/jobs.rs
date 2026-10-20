@@ -408,35 +408,77 @@ fn is_playlist_url(url: &str) -> bool {
 
 pub async fn resolve(app: &AppHandle, url: &str) -> Result<serde_json::Value> {
     blog(format!("resolve start url={}", short_url(url)));
-    let (ytdlp, _) = tools::resolve_tool(app, "yt-dlp")
-        .ok_or_else(|| anyhow!("yt-dlp missing: run setup first"))?;
     validate_url(url)?;
     let flat = is_playlist_url(url);
-    let mut cmd = sidecar_command(&ytdlp);
-    if flat {
-        cmd.args(["--dump-single-json", "--flat-playlist", "--playlist-end", "50",
-            "--no-warnings", "--socket-timeout", "15"]);
-    } else {
-        cmd.args(["--dump-json", "--no-playlist", "--no-warnings", "--socket-timeout", "15"]);
-    }
-    cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
-        .await
-        .map_err(|_| {
-            blog(format!("resolve failed (timeout) url={}", short_url(url)));
-            anyhow!("resolve timed out after 60s")
-        })??;
-    if !out.status.success() {
-        blog(format!("resolve failed url={} stderr={}", short_url(url), stderr_tail(&out.stderr)));
-        return Err(anyhow!("resolve failed"));
-    }
-    let info: serde_json::Value = parse_resolve_stdout(&out.stdout)
+
+    // Same yt-dlp flags on both platforms; only the executor differs.
+    #[cfg(target_os = "android")]
+    let stdout: Vec<u8> = {
+        let mut args: Vec<String> = if flat {
+            vec![
+                "--dump-single-json",
+                "--flat-playlist",
+                "--playlist-end",
+                "50",
+                "--no-warnings",
+                "--socket-timeout",
+                "15",
+            ]
+        } else {
+            vec!["--dump-json", "--no-playlist", "--no-warnings", "--socket-timeout", "15"]
+        }
+        .into_iter()
+        .map(String::from)
+        .collect();
+        args.push(url.to_string());
+        let tag = format!("resolve-{}", randish());
+        let tag2 = tag.clone();
+        let join = tauri::async_runtime::spawn_blocking(move || {
+            crate::android_engine::capture(&tag2, &args)
+        });
+        match tokio::time::timeout(Duration::from_secs(60), join).await {
+            Ok(Ok(text)) => text?.into_bytes(),
+            Ok(Err(e)) => return Err(anyhow!("resolve worker: {e}")),
+            Err(_) => {
+                crate::android_engine::cancel(&tag);
+                blog(format!("resolve failed (timeout) url={}", short_url(url)));
+                return Err(anyhow!("resolve timed out after 60s"));
+            }
+        }
+    };
+
+    #[cfg(not(target_os = "android"))]
+    let stdout: Vec<u8> = {
+        let (ytdlp, _) = tools::resolve_tool(app, "yt-dlp")
+            .ok_or_else(|| anyhow!("yt-dlp missing: run setup first"))?;
+        let mut cmd = sidecar_command(&ytdlp);
+        if flat {
+            cmd.args(["--dump-single-json", "--flat-playlist", "--playlist-end", "50",
+                "--no-warnings", "--socket-timeout", "15"]);
+        } else {
+            cmd.args(["--dump-json", "--no-playlist", "--no-warnings", "--socket-timeout", "15"]);
+        }
+        cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
+            .await
+            .map_err(|_| {
+                blog(format!("resolve failed (timeout) url={}", short_url(url)));
+                anyhow!("resolve timed out after 60s")
+            })??;
+        if !out.status.success() {
+            blog(format!("resolve failed url={} stderr={}", short_url(url), stderr_tail(&out.stderr)));
+            return Err(anyhow!("resolve failed"));
+        }
+        out.stdout
+    };
+
+    let info: serde_json::Value = parse_resolve_stdout(&stdout)
         .map_err(|e| {
             blog(format!("resolve parse failed url={} err={e}", short_url(url)));
             anyhow!("resolve failed")
         })?;
     let avatar = fetch_avatar(
-        &ytdlp,
+        app,
         info.get("uploader_url")
             .or_else(|| info.get("channel_url"))
             .and_then(|v| v.as_str()),
@@ -456,12 +498,12 @@ fn avatar_cache() -> Arc<Mutex<HashMap<String, Option<String>>>> {
         .clone()
 }
 
-async fn fetch_avatar(ytdlp: &std::path::Path, channel_url: Option<&str>) -> Option<String> {
+async fn fetch_avatar(app: &AppHandle, channel_url: Option<&str>) -> Option<String> {
     let channel_url = channel_url?.to_string();
     if let Some(hit) = avatar_cache().lock().await.get(&channel_url) {
         return hit.clone();
     }
-    let avatar = fetch_avatar_inner(ytdlp, &channel_url).await;
+    let avatar = fetch_avatar_inner(app, &channel_url).await;
     avatar_cache()
         .lock()
         .await
@@ -469,28 +511,64 @@ async fn fetch_avatar(ytdlp: &std::path::Path, channel_url: Option<&str>) -> Opt
     avatar
 }
 
-async fn fetch_avatar_inner(ytdlp: &std::path::Path, channel_url: &str) -> Option<String> {
-    let mut cmd = sidecar_command(ytdlp);
-    cmd.args([
-        "--dump-json",
-        "--skip-download",
-        "--no-warnings",
-        "--socket-timeout",
-        "8",
-        "--playlist-items",
-        "0",
-        channel_url,
-    ])
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null());
-    let out = tokio::time::timeout(Duration::from_secs(10), cmd.output())
-        .await
-        .ok()?
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let info: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+async fn fetch_avatar_inner(app: &AppHandle, channel_url: &str) -> Option<String> {
+    #[cfg(target_os = "android")]
+    let stdout: Vec<u8> = {
+        let _ = app;
+        let mut args: Vec<String> = [
+            "--dump-json",
+            "--skip-download",
+            "--no-warnings",
+            "--socket-timeout",
+            "8",
+            "--playlist-items",
+            "0",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        args.push(channel_url.to_string());
+        let tag = format!("avatar-{}", randish());
+        let tag2 = tag.clone();
+        let join = tauri::async_runtime::spawn_blocking(move || {
+            crate::android_engine::capture(&tag2, &args)
+        });
+        match tokio::time::timeout(Duration::from_secs(10), join).await {
+            Ok(Ok(text)) => text.ok()?.into_bytes(),
+            _ => {
+                crate::android_engine::cancel(&tag);
+                return None;
+            }
+        }
+    };
+
+    #[cfg(not(target_os = "android"))]
+    let stdout: Vec<u8> = {
+        let (ytdlp, _) = tools::resolve_tool(app, "yt-dlp")?;
+        let mut cmd = sidecar_command(&ytdlp);
+        cmd.args([
+            "--dump-json",
+            "--skip-download",
+            "--no-warnings",
+            "--socket-timeout",
+            "8",
+            "--playlist-items",
+            "0",
+            channel_url,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+        let out = tokio::time::timeout(Duration::from_secs(10), cmd.output())
+            .await
+            .ok()?
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        out.stdout
+    };
+
+    let info: serde_json::Value = serde_json::from_slice(&stdout).ok()?;
     // Priority: exact avatar entry, then any avatar-ish (non-banner) google
     // image. Banners (wide =w crops) must never become the "avatar".
     let mut thumbs = info
@@ -534,6 +612,7 @@ fn short_url(url: &str) -> String {
 }
 
 /// Last ~300 chars of child stderr for the backend log (never full output).
+#[cfg(not(target_os = "android"))]
 fn stderr_tail(stderr: &[u8]) -> String {
     let s = String::from_utf8_lossy(stderr);
     let s = s.trim();
@@ -892,12 +971,22 @@ fn pipe_line(buf: &[u8]) -> Option<String> {
 }
 
 fn build_args(app: &AppHandle, spec: &DownloadSpec, print_file: &str) -> Result<Vec<String>> {
-    let (ffmpeg, _) = tools::resolve_tool(app, "ffmpeg")
-        .ok_or_else(|| anyhow!("ffmpeg missing: run setup first"))?;
-    let ffdir = ffmpeg
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    // Android: youtubedl-android injects --ffmpeg-location for its bundled
+    // ffmpeg; a desktop path here would point at nothing.
+    #[cfg(target_os = "android")]
+    let ffdir = {
+        let _ = app;
+        String::new()
+    };
+    #[cfg(not(target_os = "android"))]
+    let ffdir = {
+        let (ffmpeg, _) = tools::resolve_tool(app, "ffmpeg")
+            .ok_or_else(|| anyhow!("ffmpeg missing: run setup first"))?;
+        ffmpeg
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
     if spec.captions_only {
         // Captions-only: no media stream, just sidecar subtitle files.
         let mut args = vec![
@@ -910,12 +999,13 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec, print_file: &str) -> Result<
             "15".to_string(),
             "--retries".to_string(),
             "5".to_string(),
-            "--ffmpeg-location".to_string(),
-            ffdir,
             "-o".to_string(),
             format!("{}/%(title)s [%(id)s].%(ext)s", spec.out_dir),
             "--skip-download".to_string(),
         ];
+        if !ffdir.is_empty() {
+            args.extend(["--ffmpeg-location".to_string(), ffdir.clone()]);
+        }
         let (cap_manual, cap_auto) = split_cap_langs(&spec.captions);
         if !cap_manual.is_empty() {
             args.extend(sub_args(&cap_manual, false, &spec.captions_format, false));
@@ -945,8 +1035,6 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec, print_file: &str) -> Result<
         "15".to_string(),
         "--retries".to_string(),
         "5".to_string(),
-        "--ffmpeg-location".to_string(),
-        ffdir,
         "-f".to_string(),
         format,
         "-o".to_string(),
@@ -959,6 +1047,9 @@ fn build_args(app: &AppHandle, spec: &DownloadSpec, print_file: &str) -> Result<
         "after_move:filepath".to_string(),
         print_file.to_string(),
     ];
+    if !ffdir.is_empty() {
+        args.extend(["--ffmpeg-location".to_string(), ffdir]);
+    }
     // NOTE: plain `--print` implies quiet in yt-dlp and would silence ALL
     // status output (verified: zero lines on both pipes). `--print-to-file`
     // keeps full stdout progress while the path lands in the file.
@@ -1261,12 +1352,17 @@ fn friendly_error(e: &anyhow::Error) -> String {
     format!("Download failed: {e}")
 }
 
+#[cfg_attr(target_os = "android", allow(unreachable_code))]
 async fn run_once(
     app: &AppHandle,
     job_id: &str,
     spec: &DownloadSpec,
     attempt: u32,
 ) -> Result<Option<String>> {
+    // Android has no sidecar: yt-dlp runs inside the app via youtubedl-android.
+    #[cfg(target_os = "android")]
+    return run_once_android(app, job_id, spec, attempt).await;
+
     let (ytdlp, _) = tools::resolve_tool(app, "yt-dlp")
         .ok_or_else(|| anyhow!("yt-dlp missing: run setup first"))?;
     // `--print-to-file` target: per-job dotfile next to the outputs, read
@@ -1602,6 +1698,225 @@ async fn run_once(
             "yt-dlp exit job={job_id} status={status} tail={tail}"
         ));
         return Err(anyhow!("yt-dlp exited with {status} :: {tail}"));
+    }
+    if let Some(ref p) = final_path {
+        blog(format!("download done job={job_id} path={p}"));
+    }
+    Ok(final_path)
+}
+
+/// Android twin of `run_once`: the Kotlin bridge runs yt-dlp in-process and
+/// queues raw output lines, which we poll and parse exactly like the desktop
+/// pipe. Cancellation destroys the Python process and its ffmpeg children.
+#[cfg(target_os = "android")]
+async fn run_once_android(
+    app: &AppHandle,
+    job_id: &str,
+    spec: &DownloadSpec,
+    attempt: u32,
+) -> Result<Option<String>> {
+    let print_file = std::path::Path::new(&spec.out_dir)
+        .join(format!(".koutube-path-{job_id}.txt"))
+        .to_string_lossy()
+        .to_string();
+    let args = build_args(app, spec, &print_file)?;
+    set_status(
+        app,
+        job_id,
+        JobView {
+            status: if attempt == 0 {
+                "downloading".into()
+            } else {
+                "retrying".into()
+            },
+            note: spec
+                .captions_only
+                .then(|| format!("fetching subtitles: {}", spec.captions.join(", "))),
+            ..Default::default()
+        },
+    )
+    .await;
+    blog(format!("android spawn job={job_id} attempt={attempt}"));
+
+    let jid = job_id.to_string();
+    let handle = tauri::async_runtime::spawn_blocking(move || {
+        crate::android_engine::run(&jid, &args)
+    });
+
+    let mut merging = false;
+    let mut last_io = Instant::now();
+    let mut tail: Vec<String> = Vec::new();
+    let mut raw_logged = 0u8;
+    let mut logged_unparsed = false;
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let lines = crate::android_engine::drain(job_id);
+        if !lines.is_empty() {
+            last_io = Instant::now();
+        }
+        for l in lines {
+            if raw_logged < 3 {
+                raw_logged += 1;
+                let shown: String = l.chars().take(300).collect();
+                blog(format!("raw android job={job_id} line={shown}"));
+            }
+            tail.push(l.clone());
+            if tail.len() > 20 {
+                tail.remove(0);
+            }
+            if let Some((loaded, total, pct, speed, eta)) = parse_pb_line(&l) {
+                set_status(
+                    app,
+                    job_id,
+                    JobView {
+                        status: "downloading".into(),
+                        percent: pct,
+                        loaded: Some(loaded),
+                        total,
+                        speed,
+                        eta,
+                        title: spec.title.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+                continue;
+            }
+            let ev = parse_progress(&l).or_else(|| {
+                if l.starts_with("[download]") {
+                    if !logged_unparsed {
+                        logged_unparsed = true;
+                        blog(format!("unparsed progress job={job_id} line={l}"));
+                    }
+                    fallback_percent(&l).map(|p| (p, None, None))
+                } else {
+                    None
+                }
+            });
+            if let Some(ev) = ev {
+                set_status(
+                    app,
+                    job_id,
+                    JobView {
+                        status: "downloading".into(),
+                        percent: ev.0,
+                        speed: ev.1,
+                        eta: ev.2,
+                        title: spec.title.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            } else if l.starts_with("[Merger]")
+                || l.starts_with("[EmbedSubtitle]")
+                || l.starts_with("[ExtractAudio]")
+            {
+                merging = true;
+                set_status(
+                    app,
+                    job_id,
+                    JobView {
+                        status: "merging".into(),
+                        percent: 100.0,
+                        title: spec.title.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            } else if l.starts_with("ERROR") || l.starts_with("[koutube]") {
+                crate::android_engine::cancel(job_id);
+                let _ = handle.await;
+                let tail_text = tail
+                    .iter()
+                    .rev()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                blog(format!("android error job={job_id} line={l} tail={tail_text}"));
+                return Err(anyhow!("{l} :: {tail_text}"));
+            } else if is_skip_line(&l) {
+                set_status(
+                    app,
+                    job_id,
+                    JobView {
+                        status: "downloading".into(),
+                        percent: 100.0,
+                        title: spec.title.clone(),
+                        note: Some("already on disk".to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            }
+        }
+
+        if handle.inner().is_finished() {
+            break;
+        }
+        if is_cancelled(job_id).await {
+            crate::android_engine::cancel(job_id);
+            let _ = handle.await;
+            if let Some(id) = spec.video_id.as_deref() {
+                cleanup_partials(&spec.out_dir, id);
+            }
+            finish(
+                app,
+                job_id,
+                JobView {
+                    status: "cancelled".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+            return Err(anyhow!("cancelled"));
+        }
+        let quiet = last_io.elapsed();
+        // First output waits on the one-time Python/ffmpeg unpack.
+        let stalled_now = if tail.is_empty() {
+            quiet > Duration::from_secs(180)
+        } else {
+            stalled(quiet, quiet, merging)
+        };
+        if stalled_now {
+            blog(format!(
+                "watchdog kill job={job_id} android merging={merging} quiet={quiet:?}"
+            ));
+            crate::android_engine::cancel(job_id);
+            let _ = handle.await;
+            return Err(anyhow!("stalled: no progress for {}s", quiet.as_secs()));
+        }
+        // Silent phases (merge, subtitle fetch) still tick the card.
+        let view = jobs().lock().await.get(job_id).map(|h| h.view.clone());
+        if let Some(v) = view {
+            if merging || v.status == "downloading" || v.status == "retrying" {
+                emit_progress(app, job_id, &v);
+            }
+        }
+    }
+
+    let code = match handle.await {
+        Ok(r) => r?,
+        Err(e) => return Err(anyhow!("android worker: {e}")),
+    };
+    // Lines queued between the last drain and process exit.
+    tail.extend(crate::android_engine::drain(job_id));
+    let tail_text = tail
+        .iter()
+        .rev()
+        .take(5)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let final_path = std::fs::read_to_string(&print_file)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let _ = std::fs::remove_file(&print_file);
+    if code != 0 {
+        blog(format!("android exit job={job_id} code={code} tail={tail_text}"));
+        return Err(anyhow!("yt-dlp exited with code {code} :: {tail_text}"));
     }
     if let Some(ref p) = final_path {
         blog(format!("download done job={job_id} path={p}"));
@@ -2245,7 +2560,13 @@ mod tests {
     }
 }
 
+#[cfg_attr(target_os = "android", allow(unreachable_code))]
 async fn kill_tree(job_id: &str) {
+    #[cfg(target_os = "android")]
+    {
+        crate::android_engine::cancel(job_id);
+        return;
+    }
     let pid = jobs().lock().await.get(job_id).and_then(|h| h.child_pid);
     let Some(pid) = pid else { return };
     #[cfg(unix)]
@@ -2319,7 +2640,11 @@ pub async fn trash_file(path: &str) -> Result<()> {
     if !p.exists() {
         return Ok(()); // idempotent: already gone counts as removed
     }
+    #[cfg(not(target_os = "android"))]
     trash::delete(&p).map_err(|e| anyhow!("trash failed: {e}"))?;
+    // Android has no trash: delete outright (still guarded by known_dirs above).
+    #[cfg(target_os = "android")]
+    std::fs::remove_file(&p).map_err(|e| anyhow!("delete failed: {e}"))?;
     blog(format!("trashed path={}", p.display()));
     Ok(())
 }

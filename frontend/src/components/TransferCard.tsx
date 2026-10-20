@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore, useLocale } from '../lib/store';
 import { fmtBytes, kindBadge, splitStats, statusLine } from '../lib/transfer';
-import { isTauri, playFile, revealFile, trashDownload } from '../lib/desktop';
+import { isTauri, isAndroid, playFile, revealFile, trashDownload } from '../lib/desktop';
 import Confirm from './Confirm';
 import { Icon, PATHS } from './icons';
 
@@ -136,7 +136,9 @@ export default function TransferCard({ transferId, onRemove }: { transferId: str
       {done && item.filepath && isTauri() && (
         <div className="row" style={{ marginTop: 8 }}>
           <button className="pill-btn tonal icon-btn" onClick={play} aria-label={t('transfer.playItem', { title: item.title })} title={t('transfer.play')}><Icon d={PATHS.play} /></button>
-          <button className="pill-btn outlined icon-btn" onClick={reveal} aria-label={t('transfer.showItem', { title: item.title })} title={t('transfer.showFolder')}><Icon d={PATHS.folder} /></button>
+          {!isAndroid() && (
+            <button className="pill-btn outlined icon-btn" onClick={reveal} aria-label={t('transfer.showItem', { title: item.title })} title={t('transfer.showFolder')}><Icon d={PATHS.folder} /></button>
+          )}
           <button className="pill-btn outlined icon-btn" onClick={() => setConfirmTrash(true)} aria-label={t('transfer.deleteItem', { title: item.title })} title={t('transfer.deleteTitle')}>
             <Icon d={PATHS.trash} />
           </button>

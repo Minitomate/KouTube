@@ -4,7 +4,7 @@ import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, useLocal
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, fmtClock, makeRateTracker, splitStats, throttleLatest, tagFilename, srtFilename, subsUrl, saveBlob, aggregateBatch } from '../lib/transfer';
 import { captionLabel } from '../lib/lang';
-import { isTauri, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
+import { isTauri, isAndroid, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
 import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
 import Confirm from '../components/Confirm';
 import UrlBar from '../components/UrlBar';
@@ -68,7 +68,7 @@ export default function Home() {
   // Desktop window: remembered size (clamped to this monitor), else the
   // default; min floor, centered. Resizes persist debounced for next launch.
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!isTauri() || isAndroid()) return;
     let dead = false;
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
     let unlisten: (() => void) | undefined;

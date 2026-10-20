@@ -7,7 +7,7 @@ import { Icon, PATHS } from './components/icons';
 import { useStore, resolveTheme, applyDownloadDefaults, useLocale } from './lib/store';
 import { loadSettings, applyTheme } from './lib/settings';
 import { t } from './lib/i18n';
-import { isTauri } from './lib/desktop';
+import { isTauri, isAndroid } from './lib/desktop';
 import { runUpdateCheck, runUpdateDownload, dismissPendingUpdate, relaunchApp, shouldAutoCheck, formatReleaseDate } from './lib/updater';
 import ContextMenu from './components/ContextMenu';
 
@@ -28,7 +28,8 @@ function Shell() {
   // Daily update check (desktop only): silent unless an update is found.
   // Failures never surface here — an offline launch retries next time.
   useEffect(() => {
-    if (!isTauri()) return;
+    // Updates are an APK reinstall on Android: no in-app updater there.
+    if (!isTauri() || isAndroid()) return;
     (async () => {
       try {
         const { settings } = await loadSettings();
@@ -60,7 +61,7 @@ function Shell() {
     set({ updateDismissed: true });
     await dismissPendingUpdate();
   }
-  const showBanner = isTauri() && !updateDismissed &&
+  const showBanner = isTauri() && !isAndroid() && !updateDismissed &&
     (updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready');
   return (
     <div className="app-shell">

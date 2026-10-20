@@ -4,7 +4,7 @@ import { loadSettings, patchSettings, SEEDS, VARIANTS, type Settings } from '../
 import { localeTag } from '../lib/i18n';
 import { copyDebugLog, saveDebugLog } from '../lib/debug';
 import { QUALITIES } from '../lib/store';
-import { isTauri, pickFolder, getRecentLogs, openTerms, openExternal, CREATOR_LINKS } from '../lib/desktop';
+import { isTauri, isAndroid, pickFolder, resolveOutDir, getRecentLogs, openTerms, openExternal, CREATOR_LINKS } from '../lib/desktop';
 import { Icon, PATHS } from '../components/icons';
 import Footer from '../components/Footer';
 import { runUpdateCheck, runUpdateDownload, relaunchApp, openReleasesPage, getAppVersion, formatReleaseDate } from '../lib/updater';
@@ -32,9 +32,15 @@ export default function Settings() {
   }
 
   useEffect(() => {
-    loadSettings().then(({ settings: s, reset }) => {
-      setSettings(s);
-      set({ theme: s.theme, seed: s.seed, locale: s.locale });
+    loadSettings().then(async ({ settings: s, reset }) => {
+      let cur = s;
+      // Android has one fixed download root: fill it on first visit so the
+      // path shows up (and play/trash validation has a root) before downloading.
+      if (isAndroid() && !s.outDir) {
+        try { cur = await patchSettings({ outDir: await resolveOutDir() }); } catch { /* shown as no folder */ }
+      }
+      setSettings(cur);
+      set({ theme: cur.theme, seed: cur.seed, locale: cur.locale });
       if (reset) setNote(t('set.corrupt'));
     });
   }, [set, t]);
@@ -99,7 +105,7 @@ export default function Settings() {
     <>
       <div className="card">
         <h2>{t('set.updates')}</h2>
-        {isTauri() ? (
+        {isTauri() && !isAndroid() ? (
           <>
             <div className="meta">
               {t('set.currentVersion', { v: appVersion })}
@@ -167,7 +173,7 @@ export default function Settings() {
           </>
         ) : (
           <>
-            <p className="meta">{t('set.webNote')}</p>
+            <p className="meta">{isAndroid() ? t('set.apkNote') : t('set.webNote')}</p>
             <div className="row" style={{ marginTop: 8 }}>
               <button className="pill-btn tonal" onClick={() => void openReleasesPage()}>{t('set.openReleases')}</button>
             </div>
@@ -177,9 +183,13 @@ export default function Settings() {
       <div className="card">
         <h2>{t('set.downloads')}</h2>
         <div className="meta">{settings.outDir ? t('set.folder', { dir: settings.outDir }) : t('set.noFolder')}</div>
-        <div className="row" style={{ marginTop: 8 }}>
-          <button className="pill-btn tonal" onClick={chooseFolder}>{t('set.choose')}</button>
-        </div>
+        {isAndroid() ? (
+          <p className="meta">{t('set.folderAndroid')}</p>
+        ) : (
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="pill-btn tonal" onClick={chooseFolder}>{t('set.choose')}</button>
+          </div>
+        )}
         <div style={{ marginTop: 8 }}>
           <Switch
             checked={settings.splitKinds}

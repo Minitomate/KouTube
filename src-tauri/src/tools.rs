@@ -175,9 +175,28 @@ async fn download_to(app: &AppHandle, url: &str, dest: &Path, label: &str) -> Re
 
 /// Ensure yt-dlp + ffmpeg + ffprobe exist, downloading missing ones.
 /// Returns `{ tools: { yt-dlp, ffmpeg, ffprobe }, bootstrapped: bool }`.
+#[cfg_attr(target_os = "android", allow(unreachable_code))]
 pub async fn ensure_tools(app: &AppHandle) -> Result<serde_json::Value> {
-    if have_all_tools(app) {
-        return Ok(status(app));
+    // Android ships yt-dlp, Python and ffmpeg inside the APK (youtubedl-android).
+    // There is nothing to download and no executable path to report.
+    #[cfg(target_os = "android")]
+    {
+        let _ = app;
+        return Ok(serde_json::json!({
+            "tools": {
+                "yt-dlp": "bundled",
+                "ffmpeg": "bundled",
+                "ffprobe": "bundled",
+            },
+            "bootstrapped": false,
+            "bundled": true,
+        }));
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        if have_all_tools(app) {
+            return Ok(status(app));
+        }
     }
     jobs::blog("ensure_tools: bootstrapping missing tools".to_string());
     let dir = bins_dir(app)?;

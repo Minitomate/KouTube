@@ -11,6 +11,8 @@ test-results/
 *.log
 .DS_Store
 src-tauri/target/
-src-tauri/gen/
+src-tauri/gen/schemas/
+# The generated Android Studio project is source: keep it, minus build output
+# (gen/android/.gitignore covers those).
 src-tauri/binaries/*
 !src-tauri/binaries/README.md

@@ -2,7 +2,7 @@
 // Web builds have no updater: every entry here degrades to null/no-op.
 // Release notes come from the manifest body: rendered as plain text only.
 import type { DownloadEvent, Update } from '@tauri-apps/plugin-updater';
-import { isTauri } from './desktop';
+import { isTauri, isAndroid } from './desktop';
 import { localeTag, t, type Locale } from './i18n';
 import { useStore } from './store';
 
@@ -47,7 +47,8 @@ export async function dismissPendingUpdate(): Promise<void> {
 
 /** Null when up to date (or not on desktop). Keeps the pending Update for download. */
 export function checkForUpdate(): Promise<UpdateInfo | null> {
-  if (!isTauri()) return Promise.resolve(null);
+  // Android ships as a sideloaded APK: updates are a manual reinstall.
+  if (!isTauri() || isAndroid()) return Promise.resolve(null);
   if (!inflight) {
     inflight = (async (): Promise<UpdateInfo | null> => {
       await discardPending();

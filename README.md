@@ -14,6 +14,7 @@ Direct downloads:
 
 - **Linux:** [AppImage](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_amd64.AppImage) (runs anywhere) · [.deb](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_amd64.deb) · [.rpm](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube-1.1.1-1.x86_64.rpm)
 - **Windows:** [installer](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_x64-setup.exe) · [.msi](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_x64_en-US.msi)
+- **Android 7+ (arm64):** [APK](https://github.com/Minitomate/KouTube/releases/latest/download/KouTube_1.1.1_arm64.apk) — sideload by allowing installs from your browser/file manager. Everything runs on the phone; downloads go to the app's Download folder and play with the system player.
 
 The desktop app checks for updates once a day on launch and can install them in-app (AppImage and Windows installer; `.deb`/`.rpm` point at the releases page instead).
 

@@ -8,6 +8,11 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+/** True inside the Android Tauri app (the WebView UA always carries "Android"). */
+export function isAndroid(): boolean {
+  return isTauri() && /Android/i.test(navigator.userAgent);
+}
+
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 type ListenFn = (
   event: string,
@@ -146,8 +151,15 @@ export async function pickFolder(): Promise<string | null> {
 }
 
 /** Folder resolution with loud errors: never silent, never stuck-busy.
- * Always prompts: persistence lives in settings, not here. */
+ * Always prompts: persistence lives in settings, not here.
+ * Android has no usable folder picker: downloads go to the app's external
+ * Download dir (`getExternalFilesDir(DIRECTORY_DOWNLOADS)`), which needs no
+ * storage permission and is reachable over USB/MTP. */
 export async function resolveOutDir(locale: Locale = 'en'): Promise<string> {
+  if (isAndroid()) {
+    const { invoke } = await tauri();
+    return invoke('default_out_dir') as Promise<string>;
+  }
   let picked: string | string[] | null;
   try {
     picked = await pickFolder();

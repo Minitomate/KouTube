@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore, useLocale, type Transfer } from '../lib/store';
 import type { Settings } from '../lib/settings';
 import { t, type Locale } from '../lib/i18n';
-import { isTauri, playFile, revealFile, trashDownload } from '../lib/desktop';
+import { isTauri, isAndroid, playFile, revealFile, trashDownload } from '../lib/desktop';
 import { runUpdateCheck, getAppVersion } from '../lib/updater';
 import { copyDebugLog } from '../lib/debug';
 import Confirm from './Confirm';
@@ -28,6 +28,8 @@ export interface MenuOptions {
   dev: boolean;
   version: string;
   desktop: boolean;
+  /** Android: reveal-in-folder and the updater do not exist. */
+  android?: boolean;
 }
 
 /** Pure spec: entry ids + labels per context. Unit-tested. */
@@ -47,9 +49,9 @@ export function menuEntriesFor(ctx: MenuContext, opts: MenuOptions, locale: Loca
       const entries: MenuEntry[] = [];
       // Mirror the card buttons: actions only exist for finished Tauri cards.
       if (tr.status === 'done' && tr.filepath && opts.desktop) {
+        entries.push({ id: 'play', label: t(locale, 'menu.play') });
+        if (!opts.android) entries.push({ id: 'reveal', label: t(locale, 'menu.reveal') });
         entries.push(
-          { id: 'play', label: t(locale, 'menu.play') },
-          { id: 'reveal', label: t(locale, 'menu.reveal') },
           { id: 'copyPath', label: t(locale, 'menu.copyPath') },
           { id: MENU_SEP, label: '' },
           { id: 'delete', label: t(locale, 'menu.delete'), danger: true },
@@ -64,7 +66,7 @@ export function menuEntriesFor(ctx: MenuContext, opts: MenuOptions, locale: Loca
         { id: 'header', label: `KouTube ${opts.version}`, disabled: true },
         { id: 'pasteInspect', label: t(locale, 'menu.pasteInspect') },
         { id: 'copyDebug', label: t(locale, 'menu.copyDebug') },
-        { id: 'checkUpdates', label: t(locale, 'menu.checkUpdates') },
+        ...(opts.android ? [] : [{ id: 'checkUpdates', label: t(locale, 'menu.checkUpdates') }]),
         { id: MENU_SEP, label: '' },
         { id: 'goHome', label: t(locale, 'menu.home') },
         { id: 'goSettings', label: t(locale, 'menu.settings') },
@@ -217,6 +219,7 @@ export default function ContextMenu() {
         dev: import.meta.env.DEV,
         version,
         desktop: isTauri(),
+        android: isAndroid(),
       }, lang);
       const opened: OpenMenu = {
         // Compact rows (~32px each): the whole menu always fits, no scroll.

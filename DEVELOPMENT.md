@@ -33,6 +33,24 @@ cd frontend && npm install && npm run dev -- --port 5173
 
 Ports: frontend `:5173` (strict), backend `:8000`. Only `youtube.com` / `youtu.be` / `music.youtube.com` URLs are accepted (SSRF allowlist).
 
+### Android (arm64)
+
+The APK bundles Python, `yt-dlp` and `ffmpeg` via [youtubedl-android](https://github.com/yausername/youtubedl-android); there is no sidecar. Rust keeps building the yt-dlp argument list and parsing output, and reaches a small Kotlin bridge (`gen/android/.../YtdlpBridge.kt`) over JNI.
+
+```bash
+export JAVA_HOME=/path/to/jdk17
+export ANDROID_HOME=/path/to/android-sdk          # platform 37, build-tools 37, NDK 29
+export NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+rustup target add aarch64-linux-android
+
+cargo tauri android build --apk --target aarch64 --debug
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
+
+Downloads land in `getExternalFilesDir(DIRECTORY_DOWNLOADS)` (no storage permission); the folder picker, updater and reveal-in-folder are hidden on Android. `src-tauri/gen/android` is tracked source: edit the Gradle project there directly.
+
+Release APKs are signed from `src-tauri/gen/android/keystore.properties` (gitignored). CI writes it from `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` and uploads `KouTube_<version>_arm64.apk` to the draft release.
+
 ## Settings reference
 
 `maxConcurrent` 1–8 (default 4, paces every batch) · `showThumbnails` (default on, gates every thumbnail surface) · `outDir` + `splitKinds` (desktop folder) · `showAdvanced` · download defaults (format/quality/containers/codecs) · theme/seed/variant · locale · auto-update check.
@@ -55,6 +73,15 @@ cd e2e && npx playwright test -c screenshots.config.ts   # writes docs/screensho
 ## Releases (manual)
 
 Test, approve, bump versions (`frontend/package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`), commit, push, then run the **Release** workflow (Actions → Release → Run workflow with a version like `v1.1.0`). It attaches the artifacts to a **draft** release — publish the draft by hand after testing the builds.
+
+Android signing key (back this up; losing it means installed APKs can never be updated): `~/.local/koutube/release.keystore`, password in `src-tauri/gen/android/keystore.properties` (both gitignored). Push the CI secrets once:
+
+```bash
+base64 -w0 ~/.local/koutube/release.keystore | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD --body "$(grep '^storePassword=' src-tauri/gen/android/keystore.properties | cut -d= -f2)"
+gh secret set ANDROID_KEY_ALIAS --body koutube
+gh secret set ANDROID_KEY_PASSWORD --body "$(grep '^keyPassword=' src-tauri/gen/android/keystore.properties | cut -d= -f2)"
+```
 
 ## Troubleshooting
 
