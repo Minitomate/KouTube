@@ -99,7 +99,7 @@ jobs:
       - name: Expose Tauri CLI to Gradle
         run: |
           mkdir -p "$HOME/.local/bin"
-          printf '#!/bin/sh\nexec "%s/frontend/node_modules/.bin/tauri" "$@"\n' "$GITHUB_WORKSPACE" > "$HOME/.local/bin/cargo-tauri"
+          printf '#!/bin/sh\n[ "$1" = "tauri" ] && shift\nexec "%s/frontend/node_modules/.bin/tauri" "$@"\n' "$GITHUB_WORKSPACE" > "$HOME/.local/bin/cargo-tauri"
           chmod +x "$HOME/.local/bin/cargo-tauri"
       - name: Release keystore
         env:
