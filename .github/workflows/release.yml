@@ -94,6 +94,13 @@ jobs:
           key: android-arm64
       - run: npm ci
         working-directory: frontend
+      # The generated Gradle task shells out to `cargo tauri`; expose the npm
+      # CLI under that name instead of compiling tauri-cli on every run.
+      - name: Expose Tauri CLI to Gradle
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec "%s/frontend/node_modules/.bin/tauri" "$@"\n' "$GITHUB_WORKSPACE" > "$HOME/.local/bin/cargo-tauri"
+          chmod +x "$HOME/.local/bin/cargo-tauri"
       - name: Release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
