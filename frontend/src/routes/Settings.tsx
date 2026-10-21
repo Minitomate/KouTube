@@ -4,12 +4,13 @@ import { loadSettings, patchSettings, SEEDS, VARIANTS, type Settings } from '../
 import { localeTag } from '../lib/i18n';
 import { copyDebugLog, saveDebugLog } from '../lib/debug';
 import { QUALITIES } from '../lib/store';
-import { isTauri, isAndroid, pickFolder, resolveOutDir, getRecentLogs, openTerms, openExternal, CREATOR_LINKS } from '../lib/desktop';
+import { isTauri, isAndroid, pickFolder, androidEngineInfo, updateAndroidEngine, getRecentLogs, openTerms, openExternal, CREATOR_LINKS, type AndroidEngineInfo } from '../lib/desktop';
 import { Icon, PATHS } from '../components/icons';
 import Footer from '../components/Footer';
 import { runUpdateCheck, runUpdateDownload, relaunchApp, openReleasesPage, getAppVersion, formatReleaseDate } from '../lib/updater';
 import PreferenceFields from '../components/PreferenceFields';
 import Switch from '../components/Switch';
+import StorageSetup from '../components/StorageSetup';
 
 export default function Settings() {
   const { set, updateStatus, updateVersion, updateNotes, updatePubDate, updateProgress, updateError } = useStore();
@@ -18,10 +19,19 @@ export default function Settings() {
   const [note, setNote] = useState('');
   const [log, setLog] = useState<string[] | null>(null);
   const [appVersion, setAppVersion] = useState('…');
+  const [storageOpen, setStorageOpen] = useState(false);
+  const [engine, setEngine] = useState<AndroidEngineInfo | null>(null);
+  const [engineBusy, setEngineBusy] = useState(false);
+  const [engineNote, setEngineNote] = useState('');
 
   useEffect(() => {
     if (isTauri()) getAppVersion().then(setAppVersion).catch(() => setAppVersion(t('foot.unknown')));
   }, [t]);
+
+  useEffect(() => {
+    if (!isAndroid()) return;
+    androidEngineInfo().then(setEngine).catch(() => {});
+  }, []);
 
   async function manualCheck() {
     await runUpdateCheck(lang);
@@ -32,16 +42,11 @@ export default function Settings() {
   }
 
   useEffect(() => {
-    loadSettings().then(async ({ settings: s, reset }) => {
-      let cur = s;
-      // Android has one fixed download root: fill it on first visit so the
-      // path shows up (and play/trash validation has a root) before downloading.
-      if (isAndroid() && !s.outDir) {
-        try { cur = await patchSettings({ outDir: await resolveOutDir() }); } catch { /* shown as no folder */ }
-      }
-      setSettings(cur);
-      set({ theme: cur.theme, seed: cur.seed, locale: cur.locale });
+    loadSettings().then(({ settings: s, reset }) => {
+      setSettings(s);
+      set({ theme: s.theme, seed: s.seed, locale: s.locale });
       if (reset) setNote(t('set.corrupt'));
+      if (isAndroid() && !s.androidStorageChosen) setStorageOpen(true);
     });
   }, [set, t]);
 
@@ -61,10 +66,28 @@ export default function Settings() {
       setNote(t('set.folderDesktop'));
       return;
     }
+    if (isAndroid()) {
+      setStorageOpen(true);
+      return;
+    }
     const picked = await pickFolder().catch(() => null);
     if (picked && !Array.isArray(picked)) {
       await update({ outDir: picked });
       setNote(t('set.folderIs', { dir: picked }));
+    }
+  }
+
+  async function updateEngine() {
+    setEngineBusy(true);
+    setEngineNote('');
+    try {
+      const v = await updateAndroidEngine();
+      setEngine(await androidEngineInfo());
+      setEngineNote(t('set.engineUpdated', { v }));
+    } catch (e) {
+      setEngineNote(t('set.engineUpdateFail', { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setEngineBusy(false);
     }
   }
 
@@ -174,6 +197,26 @@ export default function Settings() {
         ) : (
           <>
             <p className="meta">{isAndroid() ? t('set.apkNote') : t('set.webNote')}</p>
+            {isAndroid() && (
+              <div style={{ marginTop: 12 }}>
+                <div className="meta">
+                  {engine ? t('set.engine', { v: engine.version }) : t('set.loading')}
+                </div>
+                {engine?.error && (
+                  <div className="field-error" role="alert">{t('set.engineError', { msg: engine.error })}</div>
+                )}
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button
+                    className="pill-btn tonal"
+                    onClick={() => void updateEngine()}
+                    disabled={engineBusy}
+                  >
+                    {engineBusy ? t('set.engineUpdating') : t('set.engineUpdate')}
+                  </button>
+                </div>
+                {engineNote && <div className="meta" style={{ marginTop: 8 }}>{engineNote}</div>}
+              </div>
+            )}
             <div className="row" style={{ marginTop: 8 }}>
               <button className="pill-btn tonal" onClick={() => void openReleasesPage()}>{t('set.openReleases')}</button>
             </div>
@@ -183,13 +226,12 @@ export default function Settings() {
       <div className="card">
         <h2>{t('set.downloads')}</h2>
         <div className="meta">{settings.outDir ? t('set.folder', { dir: settings.outDir }) : t('set.noFolder')}</div>
-        {isAndroid() ? (
-          <p className="meta">{t('set.folderAndroid')}</p>
-        ) : (
+        {isTauri() && (
           <div className="row" style={{ marginTop: 8 }}>
             <button className="pill-btn tonal" onClick={chooseFolder}>{t('set.choose')}</button>
           </div>
         )}
+        {isAndroid() && <p className="meta">{t('set.folderAndroid')}</p>}
         <div style={{ marginTop: 8 }}>
           <Switch
             checked={settings.splitKinds}
@@ -306,6 +348,15 @@ export default function Settings() {
         </div>
       </div>
       {note && <div className="meta" role="note">{note}</div>}
+      <StorageSetup
+        open={storageOpen}
+        onClose={() => setStorageOpen(false)}
+        onSaved={(next) => {
+          setSettings(next);
+          setStorageOpen(false);
+          setNote(t('set.folderIs', { dir: next.outDir ?? '' }));
+        }}
+      />
       <Footer />
     </>
   );

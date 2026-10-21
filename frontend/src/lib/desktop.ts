@@ -151,10 +151,8 @@ export async function pickFolder(): Promise<string | null> {
 }
 
 /** Folder resolution with loud errors: never silent, never stuck-busy.
- * Always prompts: persistence lives in settings, not here.
- * Android has no usable folder picker: downloads go to the app's external
- * Download dir (`getExternalFilesDir(DIRECTORY_DOWNLOADS)`), which needs no
- * storage permission and is reachable over USB/MTP. */
+ * Always prompts: persistence lives in settings, not here. Android goes
+ * through the storage picker instead (see androidStorageInfo). */
 export async function resolveOutDir(locale: Locale = 'en'): Promise<string> {
   if (isAndroid()) {
     const { invoke } = await tauri();
@@ -170,6 +168,52 @@ export async function resolveOutDir(locale: Locale = 'en'): Promise<string> {
   }
   if (!picked || Array.isArray(picked)) throw new Error(t(locale, 'desktop.noFolder'));
   return picked;
+}
+
+export interface AndroidStorageInfo {
+  granted: boolean;
+  publicDir: string;
+  appDir: string;
+}
+
+/** Android storage roots + All-files-access state. */
+export async function androidStorageInfo(): Promise<AndroidStorageInfo> {
+  const { invoke } = await tauri();
+  return (await invoke('android_storage_info')) as AndroidStorageInfo;
+}
+
+/** Open the system All-files-access screen. */
+export async function requestAndroidStorage(): Promise<void> {
+  const { invoke } = await tauri();
+  await invoke('android_request_storage');
+}
+
+/** Subdirectories of a shared-storage path for the in-app browser. */
+export async function androidListDirs(path: string): Promise<{ path: string; dirs: string[] }> {
+  const { invoke } = await tauri();
+  return (await invoke('android_list_dirs', { path })) as { path: string; dirs: string[] };
+}
+
+/** Create + write-probe a folder; returns its canonical path. */
+export async function checkOutDir(path: string): Promise<string> {
+  const { invoke } = await tauri();
+  return (await invoke('check_out_dir', { path })) as string;
+}
+
+export interface AndroidEngineInfo {
+  version: string;
+  error: string;
+}
+
+export async function androidEngineInfo(): Promise<AndroidEngineInfo> {
+  const { invoke } = await tauri();
+  return (await invoke('android_engine_info')) as AndroidEngineInfo;
+}
+
+/** Manual yt-dlp update; resolves to the new version. */
+export async function updateAndroidEngine(): Promise<string> {
+  const { invoke } = await tauri();
+  return (await invoke('android_update_engine')) as string;
 }
 
 export async function getRecentLogs(): Promise<string[]> {

@@ -4,9 +4,10 @@ import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, useLocal
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, fmtClock, makeRateTracker, splitStats, throttleLatest, tagFilename, srtFilename, subsUrl, saveBlob, aggregateBatch } from '../lib/transfer';
 import { captionLabel } from '../lib/lang';
-import { isTauri, isAndroid, resolveOutDir, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
+import { isTauri, isAndroid, resolveOutDir, androidStorageInfo, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
 import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
 import Confirm from '../components/Confirm';
+import StorageSetup from '../components/StorageSetup';
 import UrlBar from '../components/UrlBar';
 import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
@@ -31,6 +32,19 @@ export default function Home() {
   const batchCancelled = useRef(false);
   const [canCancel, setCanCancel] = useState(false);
   const [overwriteAsk, setOverwriteAsk] = useState<{ files: string[]; outDir: string; splitKinds: boolean } | null>(null);
+  const [storageOpen, setStorageOpen] = useState(false);
+
+  // First Android launch: choose where files go before any download starts.
+  useEffect(() => {
+    if (!isAndroid()) return;
+    let dead = false;
+    loadSettings()
+      .then(({ settings }) => {
+        if (!dead && !settings.androidStorageChosen) setStorageOpen(true);
+      })
+      .catch(() => {});
+    return () => { dead = true; };
+  }, []);
 
   // Connectivity: navigator flag + lightweight probe; banner blocks starts.
   // Generation-tagged: a slow probe must never override a fresher event.
@@ -160,9 +174,7 @@ export default function Home() {
       const eff = effectiveQuality(media.formatCodecs, quality, codec, lang);
       if (eff.note) notes.push(eff.note);
       q = eff.quality;
-      if (media.audioTracks.length === 0) {
-        notes.push(t('plan.noAudioTracks'));
-      } else if (audioTracks.length > 1 && cont === 'mp4') {
+      if (audioTracks.length > 1 && cont === 'mp4') {
         cont = 'mkv';
         notes.push(t('plan.mkv'));
       }
@@ -647,7 +659,22 @@ export default function Home() {
       const { settings } = await loadSettings();
       splitKinds = settings.splitKinds;
       maxConc = clampConcurrent(settings.maxConcurrent);
-      outDir = settings.outDir || await resolveOutDir(lang);
+      if (isAndroid()) {
+        if (!settings.androidStorageChosen || !settings.outDir) {
+          setStorageOpen(true);
+          return;
+        }
+        try {
+          const info = await androidStorageInfo();
+          if (!info.granted && !settings.outDir.startsWith(info.appDir)) {
+            setStorageOpen(true);
+            return;
+          }
+        } catch { /* backend reports real write failures */ }
+        outDir = settings.outDir;
+      } else {
+        outDir = settings.outDir || await resolveOutDir(lang);
+      }
       if (settings.splitKinds) {
         const sub = format === 'audio' ? 'Audio' : format === 'captions' ? 'Captions' : 'Video';
         outDir = `${outDir.replace(/[/\\]$/, '')}/${sub}`;
@@ -802,6 +829,14 @@ export default function Home() {
           onCancel={() => setOverwriteAsk(null)}
         />
       )}
+      <StorageSetup
+        open={storageOpen}
+        onClose={() => setStorageOpen(false)}
+        onSaved={(s) => {
+          setStorageOpen(false);
+          setWarn(t('storage.saved', { dir: s.outDir ?? '' }));
+        }}
+      />
       <div className="sticky-cta">
         <div>
           <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url || (media?.isPlaylist === true && selectedVideos.length === 0)} aria-label={ctaLabel}>

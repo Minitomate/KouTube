@@ -2,4 +2,7 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
   <external-path name="my_images" path="." />
   <cache-path name="my_cache_images" path="." />
+  <!-- Custom folders and SD cards: the provider stays unexported and only
+       grants per-URI read access, so a root entry is safe. -->
+  <root-path name="root" path="/" />
 </paths>

@@ -24,6 +24,8 @@ export type DownloadDefaults = z.infer<typeof DownloadDefaultsSchema>;
 
 export const SettingsSchema = z.object({
   outDir: z.string().nullable().default(null),
+  // Explicit first-run storage choice; existing installs (false) get prompted.
+  androidStorageChosen: z.boolean().default(false),
   splitKinds: z.boolean().default(false),
   theme: z.enum(['light', 'dark', 'auto']).default('auto'),
   locale: z.enum(['auto', 'en', 'es']).default('auto'),

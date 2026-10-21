@@ -47,13 +47,13 @@ cargo tauri android build --apk --target aarch64 --debug
 adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 ```
 
-Downloads land in `getExternalFilesDir(DIRECTORY_DOWNLOADS)` (no storage permission); the folder picker, updater and reveal-in-folder are hidden on Android. `src-tauri/gen/android` is tracked source: edit the Gradle project there directly.
+Downloads use the folder chosen on first launch: public `Download/KouTube` (needs All files access) or the app-specific `getExternalFilesDir(DIRECTORY_DOWNLOADS)` (no permission); SD cards and other folders work through the in-app browser. A foreground service keeps downloads alive in the background, and the bundled yt-dlp is updated to stable on launch (manual update in Settings). `src-tauri/gen/android` is tracked source: edit the Gradle project there directly.
 
 Release APKs are signed from `src-tauri/gen/android/keystore.properties` (gitignored). CI writes it from `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` and uploads `KouTube_<version>_arm64.apk` to the draft release.
 
 ## Settings reference
 
-`maxConcurrent` 1–8 (default 4, paces every batch) · `showThumbnails` (default on, gates every thumbnail surface) · `outDir` + `splitKinds` (desktop folder) · `showAdvanced` · download defaults (format/quality/containers/codecs) · theme/seed/variant · locale · auto-update check.
+`maxConcurrent` 1–8 (default 4, paces every batch) · `showThumbnails` (default on, gates every thumbnail surface) · `outDir` + `splitKinds` (download folder) · `androidStorageChosen` (Android first-run gate) · `showAdvanced` · download defaults (format/quality/containers/codecs) · theme/seed/variant · locale · auto-update check.
 
 ## Tests (everything must stay green)
 

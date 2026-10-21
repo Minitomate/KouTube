@@ -67,8 +67,11 @@ android {
             if (hasKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            // youtubedl-android uses reflective class lookups that R8 breaks.
+            isMinifyEnabled = false
+            isShrinkResources = false
             optimization {
-               enable = true
+               enable = false
             }
             proguardFiles(
                 *fileTree(".") {

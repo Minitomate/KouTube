@@ -24,3 +24,4 @@
 # references and would otherwise rename or strip them in release builds.
 -keep class com.koutube.app.YtdlpBridge { *; }
 -keep class com.koutube.app.FileBridge { *; }
+-keep class com.koutube.app.StorageBridge { *; }

@@ -64,7 +64,7 @@ body {
   color: var(--on-surface);
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
-.app-shell { max-width: 1200px; margin: 0 auto; padding: 16px 16px 140px; }
+.app-shell { max-width: 1200px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top)) 16px calc(140px + env(safe-area-inset-bottom)); }
 /* Focused single column, except full-width home sections. */
 .app-shell > :not(.inspect-grid):not(.queue-grid):not(.urlbar-card):not(.banner-card) { max-width: 640px; margin-left: auto; margin-right: auto; }
 .app-shell > .inspect-grid, .app-shell > .queue-grid, .app-shell > .urlbar-card, .app-shell > .banner-card { max-width: none; }
@@ -161,7 +161,7 @@ body {
 .cta-label { position: relative; z-index: 1; }
 
 .sticky-cta {
-  position: fixed; left: 0; right: 0; bottom: 16px; z-index: 30;
+  position: fixed; left: 0; right: 0; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 30;
   display: flex; justify-content: center; pointer-events: none;
 }
 .sticky-cta > div { pointer-events: auto; display: flex; gap: 8px; background: var(--surface-container-high); padding: 8px; border-radius: 999px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.2); }
@@ -257,7 +257,18 @@ body, .card, .pill-btn, .chip, .urlbar input, .select-pill { transition: backgro
   position: fixed; inset: 0; background: rgb(0 0 0 / 0.5);
   display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px;
 }
-.modal { max-width: 440px; width: 100%; margin: 0; }
+.modal { max-width: 440px; width: 100%; margin: 0; max-height: calc(100dvh - 32px); overflow-y: auto; }
+.storage-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.storage-option {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 12px;
+  border-radius: 16px; border: 1px solid var(--outline-variant); cursor: pointer;
+}
+.storage-option[aria-checked='true'] {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-container));
+}
+.storage-option:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.storage-option .pill-btn { align-self: flex-start; margin-top: 4px; }
 .modal-list { max-height: 160px; overflow-y: auto; font-size: 13px; padding-left: 20px; }
 .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex: none; }
 .chip.swatch[aria-pressed='true'] { border-color: var(--primary); }

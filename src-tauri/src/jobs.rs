@@ -327,6 +327,25 @@ pub async fn recent_logs() -> Vec<String> {
     logs().lock().await.clone()
 }
 
+/// True while any job is queued, downloading, retrying or merging.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub async fn has_active() -> bool {
+    jobs()
+        .lock()
+        .await
+        .values()
+        .any(|h| matches!(h.view.status.as_str(), "queued" | "downloading" | "retrying" | "merging"))
+}
+
+/// Keep the foreground service alive exactly while jobs are active.
+#[cfg(target_os = "android")]
+async fn sync_foreground() {
+    crate::android_engine::foreground(has_active().await);
+}
+
+#[cfg(not(target_os = "android"))]
+async fn sync_foreground() {}
+
 fn emit_progress(app: &AppHandle, job_id: &str, view: &JobView) {
     if let Err(e) = app.emit(
         "dl://progress",
@@ -372,6 +391,7 @@ async fn set_status(app: &AppHandle, job_id: &str, view: JobView) {
 async fn finish(app: &AppHandle, job_id: &str, view: JobView) {
     set_status(app, job_id, view).await;
     jobs().lock().await.remove(job_id);
+    sync_foreground().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -772,6 +792,9 @@ fn build_resolve_payload(info: &serde_json::Value, avatar: Option<String>) -> se
         .unwrap_or(&empty)
         .iter()
         .chain(formats.iter())
+        // Video-only formats often have no language and would claim "und",
+        // hiding real dubbed tracks behind the duplicate-language guard.
+        .filter(|f| f.get("acodec").and_then(|v| v.as_str()) != Some("none"))
         .collect();
     for f in candidates {
         let lang = f
@@ -1153,6 +1176,9 @@ pub async fn start_download(app: &AppHandle, spec: DownloadSpec) -> Result<Strin
         },
     )
     .await;
+    #[cfg(target_os = "android")]
+    crate::android_engine::request_notifications();
+    sync_foreground().await;
     let app2 = app.clone();
     let jid = job_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -1209,6 +1235,10 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                     .get(&job_id)
                     .and_then(|h| h.view.note.clone());
                 let final_path = finalize_file(&spec, done_path).await;
+                #[cfg(target_os = "android")]
+                if let Some(p) = final_path.as_deref() {
+                    crate::android_engine::scan_file(p);
+                }
                 // The card's Play button uses this path: log it so a future
                 // "could not open" is one log read away from the truth.
                 blog(format!(
@@ -1344,6 +1374,10 @@ fn friendly_error(e: &anyhow::Error) -> String {
             "This video is blocked in your region.",
         ),
         ("no video formats found", "No downloadable formats found."),
+        (
+            "403",
+            "YouTube rejected this download (HTTP 403). Update the download engine in Settings, then retry.",
+        ),
     ] {
         if m.contains(needle) {
             return msg.to_string();
@@ -1835,6 +1869,7 @@ async fn run_once_android(
                     .collect::<Vec<_>>()
                     .join(" | ");
                 blog(format!("android error job={job_id} line={l} tail={tail_text}"));
+                crate::android_engine::release(job_id);
                 return Err(anyhow!("{l} :: {tail_text}"));
             } else if is_skip_line(&l) {
                 set_status(
@@ -1870,6 +1905,7 @@ async fn run_once_android(
                 },
             )
             .await;
+            crate::android_engine::release(job_id);
             return Err(anyhow!("cancelled"));
         }
         let quiet = last_io.elapsed();
@@ -1885,6 +1921,7 @@ async fn run_once_android(
             ));
             crate::android_engine::cancel(job_id);
             let _ = handle.await;
+            crate::android_engine::release(job_id);
             return Err(anyhow!("stalled: no progress for {}s", quiet.as_secs()));
         }
         // Silent phases (merge, subtitle fetch) still tick the card.
@@ -1897,8 +1934,15 @@ async fn run_once_android(
     }
 
     let code = match handle.await {
-        Ok(r) => r?,
-        Err(e) => return Err(anyhow!("android worker: {e}")),
+        Ok(Ok(code)) => code,
+        Ok(Err(e)) => {
+            crate::android_engine::release(job_id);
+            return Err(e);
+        }
+        Err(e) => {
+            crate::android_engine::release(job_id);
+            return Err(anyhow!("android worker: {e}"));
+        }
     };
     // Lines queued between the last drain and process exit.
     tail.extend(crate::android_engine::drain(job_id));
@@ -1916,11 +1960,13 @@ async fn run_once_android(
     let _ = std::fs::remove_file(&print_file);
     if code != 0 {
         blog(format!("android exit job={job_id} code={code} tail={tail_text}"));
+        crate::android_engine::release(job_id);
         return Err(anyhow!("yt-dlp exited with code {code} :: {tail_text}"));
     }
     if let Some(ref p) = final_path {
         blog(format!("download done job={job_id} path={p}"));
     }
+    crate::android_engine::release(job_id);
     Ok(final_path)
 }
 
@@ -2464,6 +2510,25 @@ mod tests {
     }
 
     #[test]
+    fn audio_tracks_ignore_video_only_formats() {
+        let info = serde_json::json!({
+            "id": "abc", "title": "t",
+            "formats": [
+                { "vcodec": "av01", "acodec": "none" },
+                { "language": "en", "vcodec": "none", "acodec": "opus" },
+                { "language": "de", "vcodec": "none", "acodec": "opus" },
+            ],
+        });
+        let payload = build_resolve_payload(&info, None);
+        let tracks = payload.get("audioTracks").unwrap().as_array().unwrap();
+        let langs: Vec<_> = tracks
+            .iter()
+            .map(|t| t.get("lang").unwrap().as_str().unwrap())
+            .collect();
+        assert_eq!(langs, ["en", "de"]);
+    }
+
+    #[test]
     fn playlist_keeps_channel_and_preview_fields() {
         let info = serde_json::json!({
             "_type": "playlist", "title": "AI Tools",
@@ -2644,7 +2709,10 @@ pub async fn trash_file(path: &str) -> Result<()> {
     trash::delete(&p).map_err(|e| anyhow!("trash failed: {e}"))?;
     // Android has no trash: delete outright (still guarded by known_dirs above).
     #[cfg(target_os = "android")]
-    std::fs::remove_file(&p).map_err(|e| anyhow!("delete failed: {e}"))?;
+    {
+        std::fs::remove_file(&p).map_err(|e| anyhow!("delete failed: {e}"))?;
+        crate::android_engine::scan_file(&p.to_string_lossy());
+    }
     blog(format!("trashed path={}", p.display()));
     Ok(())
 }

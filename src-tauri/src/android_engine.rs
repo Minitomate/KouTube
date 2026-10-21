@@ -1,8 +1,8 @@
 //! Android execution of yt-dlp through the bundled youtubedl-android library.
 //!
-//! There is no sidecar process to spawn: Python 3.8, yt-dlp and ffmpeg ship in
-//! the APK. The Kotlin `YtdlpBridge` runs a request and queues every output
-//! line; Rust polls the queue and feeds the same parsers as the desktop path.
+//! There is no sidecar process to spawn: Python, yt-dlp and ffmpeg ship in the
+//! APK. The Kotlin `YtdlpBridge` runs a request and queues every output line;
+//! Rust polls the queue and feeds the same parsers as the desktop path.
 
 use anyhow::{anyhow, Result};
 use jni::objects::{JClass, JObject, JObjectArray, JString, JValue};
@@ -141,6 +141,124 @@ pub fn cancel(job_id: &str) {
         )?;
         Ok(())
     });
+}
+
+/// Drop a finished job's queued output lines.
+pub fn release(job_id: &str) {
+    let _ = with_env(|env| {
+        let class = app_class(env, BRIDGE)?;
+        let jid = env.new_string(job_id)?;
+        env.call_static_method(class, "release", "(Ljava/lang/String;)V", &[JValue::Object(&jid)])?;
+        Ok(())
+    });
+}
+
+fn static_string(class_name: &str, method: &str, sig: &str) -> Result<String> {
+    with_env(|env| {
+        let class = app_class(env, class_name)?;
+        let out = env.call_static_method(class, method, sig, &[])?;
+        let jstr = JString::from(out.l()?);
+        let s: String = env.get_string(&jstr)?.into();
+        Ok(s)
+    })
+}
+
+/// Installed yt-dlp version (bundled fallback before the first update).
+pub fn engine_version() -> Result<String> {
+    static_string(BRIDGE, "engineVersion", "()Ljava/lang/String;")
+}
+
+/// Last startup engine-update failure, empty when the update succeeded.
+pub fn engine_error() -> Result<String> {
+    static_string(BRIDGE, "engineError", "()Ljava/lang/String;")
+}
+
+/// Manual engine update. Kotlin reports failures as `ERR:<message>`.
+pub fn update_engine() -> Result<String> {
+    let v = static_string(BRIDGE, "updateEngine", "()Ljava/lang/String;")?;
+    match v.strip_prefix("ERR:") {
+        Some(msg) => Err(anyhow!("{msg}")),
+        None => Ok(v),
+    }
+}
+
+const STORAGE: &str = "com.koutube.app.StorageBridge";
+
+/// 0 = all-files access granted, 1 = missing.
+pub fn storage_status() -> Result<i32> {
+    with_env(|env| {
+        let class = app_class(env, STORAGE)?;
+        let out = env.call_static_method(class, "status", "()I", &[])?;
+        out.i()
+    })
+}
+
+/// Public `Download` directory (primary shared storage).
+pub fn public_download_dir() -> Result<String> {
+    static_string(STORAGE, "publicDir", "()Ljava/lang/String;")
+}
+
+/// App-specific external Downloads directory.
+pub fn app_download_dir() -> Result<String> {
+    static_string(STORAGE, "appDir", "()Ljava/lang/String;")
+}
+
+/// Open the system All-files-access screen / legacy runtime prompt.
+pub fn request_storage() -> Result<()> {
+    with_env(|env| {
+        let class = app_class(env, STORAGE)?;
+        env.call_static_method(class, "request", "()V", &[])?;
+        Ok(())
+    })
+}
+
+/// Ask for the Android 13+ notification permission (best effort, once).
+pub fn request_notifications() {
+    let _ = with_env(|env| {
+        let class = app_class(env, STORAGE)?;
+        env.call_static_method(class, "requestNotifications", "()V", &[])?;
+        Ok(())
+    });
+}
+
+/// Start/stop the dataSync foreground service.
+pub fn foreground(on: bool) {
+    let _ = with_env(|env| {
+        let class = app_class(env, STORAGE)?;
+        env.call_static_method(class, "foreground", "(Z)V", &[JValue::Bool(on as u8)])?;
+        Ok(())
+    });
+}
+
+/// Ask the media scanner to index a finished (or deleted) public file.
+pub fn scan_file(path: &str) {
+    let _ = with_env(|env| {
+        let class = app_class(env, "com.koutube.app.FileBridge")?;
+        let p = env.new_string(path)?;
+        env.call_static_method(class, "scan", "(Ljava/lang/String;)V", &[JValue::Object(&p)])?;
+        Ok(())
+    });
+}
+
+/// Write text through Android's ContentResolver (SAF `content://` URIs).
+pub fn write_uri(uri: &str, text: &str) -> Result<()> {
+    let ok = with_env(|env| {
+        let class = app_class(env, "com.koutube.app.FileBridge")?;
+        let u = env.new_string(uri)?;
+        let t = env.new_string(text)?;
+        let out = env.call_static_method(
+            class,
+            "writeUri",
+            "(Ljava/lang/String;Ljava/lang/String;)Z",
+            &[JValue::Object(&u), JValue::Object(&t)],
+        )?;
+        out.z()
+    })?;
+    if ok {
+        Ok(())
+    } else {
+        Err(anyhow!("could not write the selected file"))
+    }
 }
 
 /// Open a downloaded file through the app's FileProvider (system player).
