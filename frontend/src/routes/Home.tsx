@@ -9,6 +9,7 @@ import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
 import Confirm from '../components/Confirm';
 import StorageSetup from '../components/StorageSetup';
 import UrlBar from '../components/UrlBar';
+import MobileLinkDock from '../components/MobileLinkDock';
 import MediaSkeleton from '../components/MediaSkeleton';
 import VideoInfoCard from '../components/VideoInfoCard';
 import PlaylistPreviewCard from '../components/PlaylistPreviewCard';
@@ -780,10 +781,11 @@ export default function Home() {
   const ctaLabel = ctaBusy
     ? `${agg.done}/${agg.total} · ${ctaPct}%${batchSpeed !== null ? ` · ${fmtRate(batchSpeed)}` : ''}`
     : playlistLabel;
+  const android = isAndroid();
 
   return (
     <>
-      <UrlBar />
+      {!android && <UrlBar />}
       {!online && (
         <div className="card banner-card banner-offline" role="alert">
           <Icon d={PATHS.alert} />
@@ -813,7 +815,7 @@ export default function Home() {
           cancel();
         }}
       />
-      <div className="field-error" role="alert">{error}</div>
+      {!android && <div className="field-error" role="alert">{error}</div>}
       {warn && <div className="meta" role="note">{warn}</div>}
       {media?.isPlaylist && selectedVideos.length === 0 && !busy && (
         <div className="meta" role="note">{t('playlist.noneSelected')}</div>
@@ -837,23 +839,37 @@ export default function Home() {
           setWarn(t('storage.saved', { dir: s.outDir ?? '' }));
         }}
       />
-      <div className="sticky-cta">
-        <div>
-          <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url || (media?.isPlaylist === true && selectedVideos.length === 0)} aria-label={ctaLabel}>
-            {ctaBusy ? (
-              <>
-                <span className="cta-fill" style={{ width: `${ctaPct}%` }} aria-hidden="true" />
-                <span className="cta-label">{ctaLabel}</span>
-              </>
-            ) : ctaLabel}
-          </button>
-          {busy && canCancel && (
-            <button className="pill-btn outlined" onClick={cancel} aria-label={t('home.cancelDownload')}>
-              {t('home.cancel')}
+      {android ? (
+        <MobileLinkDock
+          error={error}
+          busy={busy}
+          canCancel={canCancel}
+          ctaBusy={ctaBusy}
+          ctaPct={ctaPct}
+          ctaLabel={ctaLabel}
+          downloadDisabled={busy || !url || (media?.isPlaylist === true && selectedVideos.length === 0)}
+          onDownload={() => void download()}
+          onCancel={cancel}
+        />
+      ) : (
+        <div className="sticky-cta">
+          <div>
+            <button className="pill-btn filled cta-progress" onClick={download} disabled={busy || !url || (media?.isPlaylist === true && selectedVideos.length === 0)} aria-label={ctaLabel}>
+              {ctaBusy ? (
+                <>
+                  <span className="cta-fill" style={{ width: `${ctaPct}%` }} aria-hidden="true" />
+                  <span className="cta-label">{ctaLabel}</span>
+                </>
+              ) : ctaLabel}
             </button>
-          )}
+            {busy && canCancel && (
+              <button className="pill-btn outlined" onClick={cancel} aria-label={t('home.cancelDownload')}>
+                {t('home.cancel')}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }
