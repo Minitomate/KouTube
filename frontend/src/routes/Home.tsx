@@ -4,7 +4,7 @@ import { useStore, blankTransfer, tlog, effectiveQuality, resolveAudio, useLocal
 import { api } from '../lib/api';
 import { prepare, transferUrl, downloadToDisk, downloadZip, fmtRate, fmtETA, fmtClock, makeRateTracker, splitStats, throttleLatest, tagFilename, srtFilename, subsUrl, saveBlob, aggregateBatch } from '../lib/transfer';
 import { captionLabel } from '../lib/lang';
-import { isTauri, isAndroid, resolveOutDir, androidStorageInfo, startDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
+import { isTauri, isAndroid, resolveOutDir, androidStorageInfo, startDesktopDownload, cancelDesktopDownload, ensureDesktopTools, mapDesktopEvent, byteRate, percentETA, existingOutputs, type MappedEvent, type DesktopEvent } from '../lib/desktop';
 import { loadSettings, saveSettings, clampConcurrent } from '../lib/settings';
 import Confirm from '../components/Confirm';
 import StorageSetup from '../components/StorageSetup';
@@ -31,8 +31,13 @@ export default function Home() {
   const rateSamples = useRef(new Map<string, Array<{ t: number; p: number }>>());
   const pctSamples = useRef(new Map<string, Array<{ t: number; p: number }>>());
   const batchCancelled = useRef(false);
+  const desktopLimit = useRef(pLimit(4));
+  const desktopTokens = useRef(new Set<{ current: boolean }>());
+  const pendingStarts = useRef(0);
+  const currentBatchId = useRef('');
+  const activeUrls = useRef(new Set<string>());
   const [canCancel, setCanCancel] = useState(false);
-  const [overwriteAsk, setOverwriteAsk] = useState<{ files: string[]; outDir: string; splitKinds: boolean } | null>(null);
+  const [overwriteAsk, setOverwriteAsk] = useState<{ files: string[]; outDir: string; splitKinds: boolean; run: () => void } | null>(null);
   const [storageOpen, setStorageOpen] = useState(false);
 
   // First Android launch: choose where files go before any download starts.
@@ -126,6 +131,16 @@ export default function Home() {
 
   function fail(message: string) {
     setError(message);
+    setBusy(false);
+    setCanCancel(false);
+  }
+
+  /** Idle only when no request is preparing and no row is still active. */
+  function maybeIdle() {
+    if (pendingStarts.current > 0) return;
+    if (useStore.getState().queue.some((q) => q.status === 'working')) return;
+    currentBatchId.current = '';
+    activeUrls.current.clear();
     setBusy(false);
     setCanCancel(false);
   }
@@ -274,7 +289,8 @@ export default function Home() {
       try {
         await downloadDesktop();
       } catch (e) {
-        fail(e instanceof Error ? e.message : t('home.downloadFailed'));
+        setError(e instanceof Error ? e.message : t('home.downloadFailed'));
+        maybeIdle();
       }
       return;
     }
@@ -497,9 +513,14 @@ export default function Home() {
     abortRefs.current.forEach((c) => c.abort());
     abortRefs.current.clear();
     batchCancelled.current = true;
+    desktopTokens.current.forEach((token) => { token.current = true; });
+    desktopTokens.current.clear();
     const ids = [...desktopJobs.current.values()];
     desktopJobs.current.clear();
+    currentBatchId.current = '';
+    activeUrls.current.clear();
     setCanCancel(false);
+    setBusy(false);
     if (ids.length) {
       import('../lib/desktop').then((d) =>
         Promise.all(ids.map((jid) => d.cancelDesktopDownload(jid).catch(() => {}))),
@@ -520,11 +541,20 @@ export default function Home() {
     outDir: string,
     transferId: string,
     extra?: { videoId?: string; overwrite?: boolean; splitKinds?: boolean; audioTracks?: string[]; captionsOnly?: boolean },
+    cancelled?: () => boolean,
   ): Promise<void> {
+    const plan = planDownload();
+    if (plan.blocked) {
+      upsertTransfer({
+        ...blankTransfer(transferId, title),
+        batchId: currentBatchId.current || undefined,
+        status: 'error', stage: 'end', error: plan.blocked,
+      });
+      setError(plan.blocked);
+      return;
+    }
     const put = (t: Parameters<typeof upsertTransfer>[0]) => upsertTransfer(tlog(t, t.stage));
     put({ ...blankTransfer(transferId, title), note: 'folder ok, starting' });
-    const plan = planDownload();
-    if (plan.blocked) { setError(plan.blocked); return; }
     if (plan.notes.length) setWarn(plan.notes.join(' '));
     // Resolves only on terminal events so batched items can run pooled.
     let stopFn = () => {};
@@ -577,7 +607,7 @@ export default function Home() {
         rateSamples.current.delete(transferId);
         pctSamples.current.delete(transferId);
         clearInterval(alive);
-        if (!useStore.getState().queue.some((q) => q.status === 'working')) setBusy(false);
+        maybeIdle();
         stopFn(); resolveRef.current?.();
         return;
       }
@@ -586,9 +616,8 @@ export default function Home() {
       rateSamples.current.delete(transferId);
       pctSamples.current.delete(transferId);
       clearInterval(alive);
-      if (!desktopJobs.current.size) setCanCancel(false);
       // Pooled jobs: only the last one out clears the CTA.
-      if (!useStore.getState().queue.some((q) => q.status === 'working')) setBusy(false);
+      maybeIdle();
       stopFn(); resolveRef.current?.();
     };
     // 1s liveness: refresh a speed-only note so pace ticks every second.
@@ -634,6 +663,12 @@ export default function Home() {
       },
     ).then(({ jobId, stop }) => {
       stopFn = stop;
+      if (cancelled?.()) {
+        stop();
+        void cancelDesktopDownload(jobId).catch(() => {});
+        finish({ id: transferId, title, loaded: 0, total: null, status: 'cancelled', stage: 'end' }, 'cancelled before job registered');
+        return;
+      }
       desktopJobs.current.set(transferId, jobId);
       setCanCancel(true);
       const cur = useStore.getState().queue.find((q) => q.id === transferId);
@@ -645,60 +680,69 @@ export default function Home() {
   }
 
   async function downloadDesktop(overwrite = false) {
-    try {
-      await ensureDesktopTools();
-    } catch (e) {
-      setError(e instanceof Error
-        ? t('urlbar.setupFailed', { msg: e.message })
-        : t('urlbar.setupFailedShort'));
-      return;
-    }
-    let outDir: string;
+    const token = { current: false };
+    desktopTokens.current.add(token);
+    pendingStarts.current++;
+    let outDir = '';
     let splitKinds = false;
     let maxConc = 4;
+    let batchId = '';
     try {
-      const { settings } = await loadSettings();
-      splitKinds = settings.splitKinds;
-      maxConc = clampConcurrent(settings.maxConcurrent);
-      if (isAndroid()) {
-        if (!settings.androidStorageChosen || !settings.outDir) {
-          setStorageOpen(true);
-          return;
-        }
-        try {
-          const info = await androidStorageInfo();
-          if (!info.granted && !settings.outDir.startsWith(info.appDir)) {
+      try {
+        await ensureDesktopTools();
+      } catch (e) {
+        setError(e instanceof Error
+          ? t('urlbar.setupFailed', { msg: e.message })
+          : t('urlbar.setupFailedShort'));
+        return;
+      }
+      if (token.current) return;
+      try {
+        const { settings } = await loadSettings();
+        splitKinds = settings.splitKinds;
+        maxConc = clampConcurrent(settings.maxConcurrent);
+        if (isAndroid()) {
+          if (!settings.androidStorageChosen || !settings.outDir) {
             setStorageOpen(true);
             return;
           }
-        } catch { /* backend reports real write failures */ }
-        outDir = settings.outDir;
-      } else {
-        outDir = settings.outDir || await resolveOutDir(lang);
-      }
-      if (settings.splitKinds) {
-        const sub = format === 'audio' ? 'Audio' : format === 'captions' ? 'Captions' : 'Video';
-        outDir = `${outDir.replace(/[/\\]$/, '')}/${sub}`;
-      }
-      await saveSettings({ ...settings, outDir: settings.outDir || outDir });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('desktop.noFolder'));
-      return;
-    }
-    // Overwrite pre-check: single videos only, skip when already confirmed.
-    if (!overwrite && !media?.isPlaylist && media?.videoId && isTauri()) {
-      try {
-        const existing = await existingOutputs(outDir, media.videoId);
-        if (existing.length) {
-          setOverwriteAsk({ files: existing, outDir, splitKinds });
-          return;
+          try {
+            const info = await androidStorageInfo();
+            if (!info.granted && !settings.outDir.startsWith(info.appDir)) {
+              setStorageOpen(true);
+              return;
+            }
+          } catch { /* backend reports real write failures */ }
+          outDir = settings.outDir;
+        } else {
+          outDir = settings.outDir || await resolveOutDir(lang);
         }
-      } catch { /* pre-check is best-effort; download proceeds */ }
-    }
-    setBusy(true);
-    batchCancelled.current = false;
-    try {
-      const max = maxConc;
+        if (settings.splitKinds) {
+          const sub = format === 'audio' ? 'Audio' : format === 'captions' ? 'Captions' : 'Video';
+          outDir = `${outDir.replace(/[/\\]$/, '')}/${sub}`;
+        }
+        await saveSettings({ ...settings, outDir: settings.outDir || outDir });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t('desktop.noFolder'));
+        return;
+      }
+      if (token.current) return;
+      // Overwrite pre-check: single videos only, skip when already confirmed.
+      if (!overwrite && !media?.isPlaylist && media?.videoId && isTauri()) {
+        try {
+          const existing = await existingOutputs(outDir, media.videoId);
+          if (existing.length) {
+            if (!token.current) {
+              setOverwriteAsk({
+                files: existing, outDir, splitKinds,
+                run: () => { void downloadDesktop(true); },
+              });
+            }
+            return;
+          }
+        } catch { /* pre-check is best-effort; download proceeds */ }
+      }
+      if (token.current) return;
       const multiAudio = format === 'audio' && audioTracks.length > 1;
       type DeskTask = {
         pageUrl: string; title: string; id: string;
@@ -709,6 +753,10 @@ export default function Home() {
       const stamp = Date.now();
       // Detail for the badge: language per audio track, quality/container for video.
       const plan = planDownload();
+      if (plan.blocked) {
+        setError(plan.blocked);
+        return;
+      }
       const videoDetail = kindDetail('video', undefined, plan.quality, plan.container);
       const capDetail = captions.map((c) => captionLabel(c)).join(', ') || undefined;
       if (media?.isPlaylist && media.entries?.length) {
@@ -739,25 +787,61 @@ export default function Home() {
       } else {
         tasks.push({ pageUrl: url, title: media?.title ?? url, id: `desk-${stamp}`, kind: format as 'video' | 'audio', detail: format === 'audio' ? audioTracks[0] : videoDetail, extra: { videoId: media?.videoId, overwrite, splitKinds } });
       }
-      // Enqueue everything upfront so batch progress is visible at once.
-      for (const t of tasks) {
-        upsertTransfer({ ...tlog(blankTransfer(t.id, t.title), 'queued'), kind: t.kind, detail: t.detail, thumbnail: t.extra.videoId ? playlistThumbLow(t.extra.videoId) : undefined });
+      if (!tasks.length) {
+        setError(t('home.noPrepared'));
+        return;
       }
-      await pool(tasks.map((task) => async () => {
-        if (batchCancelled.current) {
-          upsertTransfer({ ...blankTransfer(task.id, task.title), kind: task.kind, detail: task.detail, status: 'cancelled', stage: 'end', thumbnail: task.extra.videoId ? playlistThumbLow(task.extra.videoId) : undefined });
+      batchId = currentBatchId.current || (currentBatchId.current = `batch-${Date.now()}`);
+      activeUrls.current.add(url);
+      // Enqueue everything upfront so batch progress is visible at once.
+      for (const task of tasks) {
+        upsertTransfer({
+          ...tlog(blankTransfer(task.id, task.title), 'queued'),
+          batchId,
+          kind: task.kind,
+          detail: task.detail,
+          thumbnail: task.extra.videoId ? playlistThumbLow(task.extra.videoId) : undefined,
+        });
+      }
+      desktopLimit.current.concurrency = maxConc;
+      setCanCancel(true);
+      setBusy(true);
+      await Promise.allSettled(tasks.map((task) => desktopLimit.current(async () => {
+        if (token.current) {
+          upsertTransfer({
+            ...blankTransfer(task.id, task.title),
+            batchId,
+            kind: task.kind,
+            detail: task.detail,
+            status: 'cancelled',
+            stage: 'end',
+            thumbnail: task.extra.videoId ? playlistThumbLow(task.extra.videoId) : undefined,
+          });
           return;
         }
         try {
-          await downloadDesktopOne(task.pageUrl, task.title, outDir, task.id, task.extra);
+          await downloadDesktopOne(task.pageUrl, task.title, outDir, task.id, task.extra, () => token.current);
         } catch (err) {
           setError(err instanceof Error ? err.message : t('home.itemFailed'));
         }
-      }), max);
-      set({ step: 2 });
+      })));
+      if (!token.current) set({ step: 2 });
     } catch (e) {
-      upsertTransfer({ id: 'desk-batch', title: url, loaded: 0, total: null, status: 'error', error: e instanceof Error ? e.message : t('home.failed'), stage: 'end' });
-      setBusy(false);
+      upsertTransfer({
+        id: `desk-batch-${Date.now()}`,
+        batchId: batchId || currentBatchId.current || undefined,
+        title: url,
+        loaded: 0,
+        total: null,
+        status: 'error',
+        error: e instanceof Error ? e.message : t('home.failed'),
+        stage: 'end',
+      });
+      setError(e instanceof Error ? e.message : t('home.failed'));
+    } finally {
+      pendingStarts.current--;
+      desktopTokens.current.delete(token);
+      maybeIdle();
     }
   }
 
@@ -770,10 +854,16 @@ export default function Home() {
       batchSamples.current = [];
       return;
     }
-    const sum = useStore.getState().queue.reduce((a, q) => a + (q.loaded || 0), 0);
+    const batchId = currentBatchId.current;
+    const sum = useStore.getState().queue.reduce(
+      (a, q) => a + (!batchId || q.batchId === batchId ? (q.loaded || 0) : 0),
+      0,
+    );
     batchSamples.current = [...batchSamples.current, { t: Date.now(), p: sum }].slice(-30);
   });
-  const agg = busy && queue.length ? aggregateBatch(queue) : null;
+  const batchId = currentBatchId.current;
+  const batchQueue = batchId ? queue.filter((q) => q.batchId === batchId) : queue;
+  const agg = busy && batchQueue.length ? aggregateBatch(batchQueue) : null;
   const ctaPct = agg?.pct ?? 0;
   const batchSpeed = busy ? byteRate(batchSamples.current, Date.now()) : null;
   const playlistLabel = media?.isPlaylist ? (isTauri() ? t('home.download') : t('home.downloadZip')) : t('home.download');
@@ -827,7 +917,11 @@ export default function Home() {
           body={t('over.body')}
           items={overwriteAsk.files}
           confirmLabel={t('over.confirm')}
-          onConfirm={() => { setOverwriteAsk(null); void downloadDesktop(true); }}
+          onConfirm={() => {
+            const ask = overwriteAsk;
+            setOverwriteAsk(null);
+            ask?.run();
+          }}
           onCancel={() => setOverwriteAsk(null)}
         />
       )}
@@ -847,7 +941,9 @@ export default function Home() {
           ctaBusy={ctaBusy}
           ctaPct={ctaPct}
           ctaLabel={ctaLabel}
-          downloadDisabled={busy || !url || (media?.isPlaylist === true && selectedVideos.length === 0)}
+          downloadLabel={playlistLabel}
+          downloadDisabled={!url || (media?.isPlaylist === true && selectedVideos.length === 0)}
+          queued={busy && activeUrls.current.has(url)}
           onDownload={() => void download()}
           onCancel={cancel}
         />

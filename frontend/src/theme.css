@@ -178,7 +178,38 @@ body {
   padding: 8px; border-radius: 999px;
   background: var(--surface-container-high);
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+  transition: border-radius 220ms ease;
 }
+.dock-surface.dock-busy { display: block; border-radius: 24px; }
+.dock-surface.dock-busy.dock-expanded { border-radius: 28px; }
+.dock-busy-top { display: flex; align-items: center; gap: 8px; }
+.dock-panel {
+  display: grid; grid-template-rows: 1fr; min-width: 0; flex: 1 1 auto;
+  overflow: hidden; transition: grid-template-rows 220ms ease;
+}
+.dock-surface.dock-busy:not(.dock-expanded) .dock-panel {
+  grid-template-rows: 0fr;
+}
+.dock-form {
+  display: flex; gap: 8px; align-items: center; min-width: 0; min-height: 0;
+  opacity: 1; transform: none;
+  transition: opacity 160ms ease, transform 220ms ease, margin-top 220ms ease;
+}
+.dock-surface.dock-busy.dock-expanded .dock-form { margin-top: 8px; }
+.dock-surface.dock-busy:not(.dock-expanded) .dock-form {
+  visibility: hidden; opacity: 0; transform: translateY(-4px); pointer-events: none;
+  transition: opacity 120ms ease, transform 220ms ease, margin-top 220ms ease, visibility 0s 220ms;
+}
+.dock-toggle {
+  position: relative; flex: none; width: 48px; height: 48px; min-height: 48px; padding: 0;
+}
+.dock-toggle-icon {
+  position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.dock-toggle-close { opacity: 0; transform: rotate(-90deg) scale(0.8); }
+.dock-toggle[aria-expanded="true"] .dock-toggle-inspect { opacity: 0; transform: rotate(90deg) scale(0.8); }
+.dock-toggle[aria-expanded="true"] .dock-toggle-close { opacity: 1; transform: none; }
 .dock-error {
   pointer-events: auto; margin-bottom: 8px; padding: 8px 12px;
   border: 1px solid var(--error); border-radius: 16px;
@@ -193,7 +224,7 @@ body {
   font-size: 15px; background: var(--surface); color: var(--on-surface);
 }
 .dock-field input.has-clear { padding-right: 88px; }
-.dock-field input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.dock-field input:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .dock-icon {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%;
@@ -206,6 +237,7 @@ body {
 .dock-clear { right: 44px; }
 .dock-paste { right: 2px; }
 .dock-cta { flex: none; min-height: 48px; padding: 0 18px; white-space: nowrap; }
+.dock-cta:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .dock-cta .spinner { width: 18px; height: 18px; }
 .dock-progress { flex: 1 1 auto; min-width: 0; min-height: 48px; cursor: default; }
 .dock-progress .cta-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -263,6 +295,7 @@ fieldset.field { border: 0; padding: 0; }
   .md-panel { animation: none; }
   .md-button::after { transition: none; }
   .spinner { animation: none; }
+  .dock-surface, .dock-panel, .dock-form, .dock-toggle-icon { transition: none; }
 }
 
 .verified-mark { color: var(--outline); vertical-align: -2px; margin-left: 4px; flex: none; }

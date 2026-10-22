@@ -23,6 +23,8 @@ export interface Transfer {
   mergeAt?: number;
   /** Newest-last stage log (desktop flow); cap 30. Absent on older cards. */
   log?: string[];
+  /** Desktop batch this row belongs to; scopes the dock progress. */
+  batchId?: string;
 }
 
 export function blankTransfer(id: string, title: string): Transfer {
