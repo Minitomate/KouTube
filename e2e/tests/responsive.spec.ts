@@ -38,6 +38,56 @@ test.describe('responsive low-res', () => {
   });
 });
 
+test.describe('long unbroken content', () => {
+  const LONG_URL =
+    'https://drive.google.com/drive/folders/18yNoi4gr9v9iRtyFQwg9cPVa9q3KieSa?usp=sharing';
+
+  const overflow = (page: Page) =>
+    page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+
+  for (const width of [360, 411]) {
+    test(`description URL does not widen the cards at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.route('**/api/resolve', (r) =>
+        r.fulfill({ json: { ...manualOnly, description: `Notes:\n\n${LONG_URL}\n\n#tag` } }),
+      );
+      const app = new KouTubePage(page);
+      await app.goto();
+      await app.inspectUrl(URL);
+      await expect(page.getByRole('heading', { name: 'Manual captions fixture' })).toBeVisible();
+      expect(await overflow(page)).toBeLessThanOrEqual(1);
+      // The URL is below the 3-line preview clamp: expand to prove it wraps.
+      await page.locator('.desc-box').click();
+      expect(await overflow(page)).toBeLessThanOrEqual(1);
+    });
+  }
+
+  test('playlist with a long unbroken title fits at 360px', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    const title = 'VeryLongPlaylistTitleWithoutAnySpaces'.repeat(6);
+    await page.route('**/api/resolve', (r) =>
+      r.fulfill({
+        json: {
+          ...manualOnly,
+          title,
+          description: '',
+          is_playlist: true,
+          entries: [
+            { videoId: 'a', title: 'EntryWithAVeryLongUnbrokenTitle'.repeat(6), duration: 60 },
+            { videoId: 'b', title: 'Second entry', duration: 120 },
+          ],
+        },
+      }),
+    );
+    const app = new KouTubePage(page);
+    await app.goto();
+    await app.inspectUrl('https://www.youtube.com/playlist?list=PLtest');
+    await expect(page.getByRole('heading', { name: title })).toBeVisible();
+    await page.getByRole('button', { name: 'Show videos' }).click();
+    expect(await overflow(page)).toBeLessThanOrEqual(1);
+  });
+});
+
 test.describe('theme modes', () => {
   test.use({ colorScheme: 'dark' });
 

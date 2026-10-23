@@ -87,7 +87,8 @@ body {
 }
 .card.modal, .card.modal:hover { background: var(--surface-container); }
 .card h2 { font-size: 15px; margin: 0 0 10px; }
-.video-title { font-size: 17px; margin: 12px 0 8px; }
+/* Long unbroken titles/URLs must wrap, not widen the grid track. */
+.video-title { font-size: 17px; margin: 12px 0 8px; overflow-wrap: break-word; }
 
 .pill-btn {
   border: 0; border-radius: var(--radius-pill);
@@ -145,7 +146,7 @@ body {
 .desc-box .desc-head { display: block; font-weight: 600; margin-bottom: 6px; }
 .desc-snippet {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-  overflow: hidden; white-space: pre-wrap; margin: 0;
+  overflow: hidden; white-space: pre-wrap; overflow-wrap: break-word; margin: 0;
 }
 .desc-box .desc { margin: 0; }
 .desc-more { font-weight: 600; }
@@ -260,10 +261,12 @@ body {
 .job-thumb { width: 72px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; flex: none; background: var(--surface-container-high); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
+/* `1fr` tracks keep an auto min-content floor; without this a long URL in
+ * one card widens the whole column and pushes both cards off-screen. */
 .inspect-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.inspect-grid > * { min-width: 0; }
 @media (min-width: 860px) {
   .inspect-grid { grid-template-columns: minmax(0, 640px) 1fr; justify-content: start; align-items: start; }
-  .inspect-grid > :first-child { min-width: 0; }
 }
 .thumb-wrap { position: relative; border-radius: 16px; overflow: hidden; background: var(--surface-container-high); aspect-ratio: 16 / 9; }
 .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -271,8 +274,8 @@ body {
 .channel-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
 .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 .avatar-fallback { display: inline-flex; align-items: center; justify-content: center; background: var(--primary-container); color: var(--on-primary-container); font-weight: 700; font-size: 18px; }
-.channel-id { display: flex; flex-direction: column; }
-.desc { font-size: 13px; white-space: pre-wrap; }
+.channel-id { display: flex; flex-direction: column; min-width: 0; overflow-wrap: break-word; }
+.desc { font-size: 13px; white-space: pre-wrap; overflow-wrap: break-word; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: 13px; }
 .field > span, .field > legend { font-weight: 600; }
 fieldset.field { border: 0; padding: 0; }

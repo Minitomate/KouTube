@@ -95,7 +95,9 @@ export function useLinkInput(): LinkInput {
       // Fall through to manual paste: focus + select the input so it's one keystroke.
       document.getElementById('url')?.focus();
       (document.getElementById('url') as HTMLInputElement | null)?.select?.();
-      setError(isTauri() ? t('urlbar.pasteManual') : t('urlbar.clipboardBlocked'));
+      setError(isAndroid()
+        ? t('urlbar.pasteNative')
+        : isTauri() ? t('urlbar.pasteManual') : t('urlbar.clipboardBlocked'));
     }
   }
 

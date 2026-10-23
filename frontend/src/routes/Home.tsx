@@ -636,6 +636,7 @@ export default function Home() {
     startDesktopDownload(
       {
         url: pageUrl, videoId: extra?.videoId ?? media?.videoId,
+        title,
         kind: extra?.captionsOnly ? 'captions' : format,
         outputContainer: plan.container,
         quality: plan.quality, codec,

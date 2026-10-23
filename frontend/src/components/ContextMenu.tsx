@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore, useLocale, type Transfer } from '../lib/store';
 import type { Settings } from '../lib/settings';
 import { t, type Locale } from '../lib/i18n';
-import { isTauri, isAndroid, playFile, revealFile, trashDownload } from '../lib/desktop';
+import { isTauri, isAndroid, playFile, revealFile, trashDownload, readClipboardText } from '../lib/desktop';
 import { runUpdateCheck, getAppVersion } from '../lib/updater';
 import { copyDebugLog } from '../lib/debug';
 import Confirm from './Confirm';
@@ -155,7 +155,9 @@ function editOp(
       });
     }
     case 'paste': {
-      return navigator.clipboard.readText().then((text) => {
+      // The webview denies navigator.clipboard; the plugin is the working path.
+      const read = isTauri() ? readClipboardText : () => navigator.clipboard.readText();
+      return read().then((text) => {
         if (!text) return;
         const start = input.selectionStart ?? input.value.length;
         const end = input.selectionEnd ?? input.value.length;
@@ -180,6 +182,12 @@ function removeTransfer(id: string): void {
   set({ queue: queue.filter((q) => q.id !== id) });
 }
 
+/** Android text fields keep the native selection handles + system Paste
+ *  menu; navigator.clipboard is denied inside the webview. */
+export function usesNativeTextMenu(android: boolean, target: Element | null): boolean {
+  return android && !!target?.closest?.('input:not([type="checkbox"]), textarea');
+}
+
 export default function ContextMenu() {
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [submenu, setSubmenu] = useState<MenuEntry[] | null>(null);
@@ -202,8 +210,11 @@ export default function ContextMenu() {
 
   useEffect(() => {
     const onContext = (e: MouseEvent) => {
-      e.preventDefault();
       const target = e.target as HTMLElement | null;
+      // Android text fields: let the WebView show its native selection and
+      // Paste menu instead of replacing them with the custom menu.
+      if (usesNativeTextMenu(isAndroid(), target)) return;
+      e.preventDefault();
       const input = target?.closest?.('input, textarea') as HTMLInputElement | HTMLTextAreaElement | null;
       let ctx: MenuContext;
       if (input) {

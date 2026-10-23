@@ -230,6 +230,43 @@ pub fn foreground(on: bool) {
     });
 }
 
+/// Update the ongoing download notification; no-op when the service is off.
+pub fn notify(title: &str, text: &str, percent: Option<u32>) {
+    let _ = with_env(|env| {
+        let class = app_class(env, STORAGE)?;
+        let t = env.new_string(title)?;
+        let x = env.new_string(text)?;
+        env.call_static_method(
+            class,
+            "notifyDownload",
+            "(Ljava/lang/String;Ljava/lang/String;IZ)V",
+            &[
+                JValue::Object(&t),
+                JValue::Object(&x),
+                JValue::Int(percent.unwrap_or(0) as i32),
+                JValue::Bool(percent.is_none() as u8),
+            ],
+        )?;
+        Ok(())
+    });
+}
+
+/// One-shot "finished" notification; survives the service being stopped.
+pub fn notify_done(title: &str, text: &str) {
+    let _ = with_env(|env| {
+        let class = app_class(env, STORAGE)?;
+        let t = env.new_string(title)?;
+        let x = env.new_string(text)?;
+        env.call_static_method(
+            class,
+            "notifyDownloadDone",
+            "(Ljava/lang/String;Ljava/lang/String;)V",
+            &[JValue::Object(&t), JValue::Object(&x)],
+        )?;
+        Ok(())
+    });
+}
+
 /// Ask the media scanner to index a finished (or deleted) public file.
 pub fn scan_file(path: &str) {
     let _ = with_env(|env| {

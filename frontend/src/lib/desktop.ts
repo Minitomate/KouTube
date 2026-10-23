@@ -36,6 +36,7 @@ export async function desktopResolve(url: string): Promise<MediaInfo> {
 export interface DesktopChoice {
   url: string;
   videoId?: string;
+  title?: string;
   kind: 'video' | 'audio' | 'captions';
   outputContainer: string;
   quality: string;
@@ -266,6 +267,7 @@ export async function startDesktopDownload(
     jobId = (await invoke('start_download', {
       url: choice.url,
       videoId: choice.videoId ?? null,
+      title: choice.title ?? null,
       container: choice.kind === 'captions' ? 'srt' : choice.outputContainer,
       quality: choice.kind === 'audio' ? 'best' : choice.quality,
       // NOTE: Tauri exposes snake_case Rust params as camelCase — do NOT

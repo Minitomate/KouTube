@@ -385,13 +385,189 @@ async fn set_status(app: &AppHandle, job_id: &str, view: JobView) {
     }
     emit_progress(app, job_id, &view);
     emit_queue(app).await; // canonical snapshot AFTER every transition
+    sync_notification(false).await;
 }
+
+// ---------------------------------------------------------------------------
+// foreground notification (Android): batch average like the download button
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "android")]
+struct NotifyState {
+    last_tick: Option<Instant>,
+    last_sample: Option<(Instant, u64)>,
+}
+
+#[cfg(target_os = "android")]
+static NOTIFY: std::sync::Mutex<NotifyState> = std::sync::Mutex::new(NotifyState {
+    last_tick: None,
+    last_sample: None,
+});
+
+fn fmt_rate(bps: f64) -> String {
+    if bps >= 1_048_576.0 {
+        format!("{:.1} MB/s", bps / 1_048_576.0)
+    } else {
+        format!("{} KB/s", ((bps / 1024.0).round() as u64).max(1))
+    }
+}
+
+fn fmt_clock(secs: f64) -> String {
+    let t = secs.round().max(0.0) as u64;
+    if t >= 3600 {
+        format!("{}:{:02}:{:02}", t / 3600, (t % 3600) / 60, t % 60)
+    } else {
+        format!("{}:{:02}", t / 60, t % 60)
+    }
+}
+
+/// Notification copy for the active jobs: average percent of the batch plus
+/// the aggregate rate/ETA the download button shows. Pure, unit-tested.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn notification_view(views: &[JobView], rate: Option<f64>) -> (String, String, Option<u32>) {
+    let title = if views.len() == 1 {
+        views[0]
+            .title
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| "KouTube".to_string())
+    } else {
+        format!("Downloading {} videos", views.len())
+    };
+    if views.iter().any(|v| v.status == "merging") {
+        return (title, "Processing…".to_string(), None);
+    }
+    if views.iter().all(|v| v.status == "queued") {
+        return (title, "Queued…".to_string(), None);
+    }
+    if views.iter().all(|v| v.status == "retrying") {
+        return (title, "Retrying…".to_string(), None);
+    }
+    let pct = (views.iter().map(|v| v.percent.clamp(0.0, 100.0)).sum::<f64>()
+        / views.len() as f64)
+        .round() as u32;
+    let mut text = format!("{pct}%");
+    if let Some(rate) = rate.filter(|r| *r > 0.0) {
+        text.push_str(" · ");
+        text.push_str(&fmt_rate(rate));
+        // ETA only when every job knows its size: no invented estimates.
+        if views
+            .iter()
+            .all(|v| matches!((v.loaded, v.total), (Some(_), Some(_))))
+        {
+            let remaining: u64 = views
+                .iter()
+                .map(|v| v.total.unwrap_or(0).saturating_sub(v.loaded.unwrap_or(0)))
+                .sum();
+            if remaining > 0 {
+                text.push_str(&format!(" · ETA {}", fmt_clock(remaining as f64 / rate)));
+            }
+        }
+    }
+    (title, text, Some(pct))
+}
+
+/// Push the batch snapshot to the foreground service, at most ~1/s (forced
+/// on transitions). No-op while the service is not running.
+#[cfg(target_os = "android")]
+async fn sync_notification(force: bool) {
+    let views: Vec<JobView> = jobs()
+        .lock()
+        .await
+        .values()
+        .filter(|h| matches!(h.view.status.as_str(), "queued" | "downloading" | "retrying" | "merging"))
+        .map(|h| h.view.clone())
+        .collect();
+    if views.is_empty() {
+        return;
+    }
+    let now = Instant::now();
+    let snapshot = {
+        let mut st = NOTIFY.lock().unwrap_or_else(|e| e.into_inner());
+        if !force
+            && st
+                .last_tick
+                .is_some_and(|t| now.duration_since(t) < Duration::from_millis(900))
+        {
+            return;
+        }
+        st.last_tick = Some(now);
+        let loaded: u64 = views.iter().filter_map(|v| v.loaded).sum();
+        let rate = st.last_sample.and_then(|(t, prev)| {
+            let dt = now.duration_since(t).as_secs_f64();
+            (dt > 0.2 && loaded > prev).then(|| (loaded - prev) as f64 / dt)
+        });
+        st.last_sample = Some((now, loaded));
+        notification_view(&views, rate)
+    };
+    crate::android_engine::notify(&snapshot.0, &snapshot.1, snapshot.2);
+}
+
+#[cfg(not(target_os = "android"))]
+async fn sync_notification(_force: bool) {}
 
 /// Terminal transition: snapshot, then drop the job so the map can't leak.
 async fn finish(app: &AppHandle, job_id: &str, view: JobView) {
+    let status = view.status.clone();
+    let title = view.title.clone();
     set_status(app, job_id, view).await;
     jobs().lock().await.remove(job_id);
+    sync_notification(true).await;
+    completion_notification(&status, title.as_deref()).await;
     sync_foreground().await;
+}
+
+/// Time to drop `stopForeground`'s placeholder and announce what finished.
+#[cfg(target_os = "android")]
+#[derive(Default)]
+struct Completion {
+    done: u32,
+    last: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+static COMPLETION: std::sync::OnceLock<tokio::sync::Mutex<Completion>> = std::sync::OnceLock::new();
+
+/// Once nothing is active, post one summary for everything that finished
+/// successfully while the batch ran. Cancelled/errored jobs never count.
+#[cfg(target_os = "android")]
+async fn completion_notification(status: &str, title: Option<&str>) {
+    let cell = COMPLETION.get_or_init(|| tokio::sync::Mutex::new(Completion::default()));
+    let mut c = cell.lock().await;
+    if status == "done" {
+        c.done += 1;
+        if let Some(t) = title.filter(|t| !t.trim().is_empty()) {
+            c.last = Some(t.to_string());
+        }
+    }
+    if has_active().await {
+        return;
+    }
+    let finished = std::mem::take(&mut *c);
+    drop(c);
+    if finished.done == 0 {
+        return;
+    }
+    let (heading, text) = completion_text(finished.done, finished.last.as_deref());
+    crate::android_engine::notify_done(&heading, &text);
+}
+
+#[cfg(not(target_os = "android"))]
+async fn completion_notification(_status: &str, _title: Option<&str>) {}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn completion_text(done: u32, last: Option<&str>) -> (String, String) {
+    if done == 1 {
+        (
+            "Download complete".to_string(),
+            last.unwrap_or("Saved to your downloads").to_string(),
+        )
+    } else {
+        (
+            format!("{done} downloads complete"),
+            "Saved to your downloads".to_string(),
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,6 +1334,7 @@ pub async fn start_download(app: &AppHandle, spec: DownloadSpec) -> Result<Strin
             JobHandle {
                 view: JobView {
                     status: "queued".into(),
+                    title: spec.title.clone(),
                     ..Default::default()
                 },
                 child_pid: None,
@@ -1172,6 +1349,7 @@ pub async fn start_download(app: &AppHandle, spec: DownloadSpec) -> Result<Strin
         &job_id,
         JobView {
             status: "queued".into(),
+            title: spec.title.clone(),
             ..Default::default()
         },
     )
@@ -1339,6 +1517,7 @@ async fn run_with_retries(app: AppHandle, job_id: String, spec: DownloadSpec) {
                     &job_id,
                     JobView {
                         status: "retrying".into(),
+                        title: spec.title.clone(),
                         error: Some(format!(
                             "stalled, retry {}/{} in {wait}s",
                             attempt + 1,
@@ -1415,6 +1594,7 @@ async fn run_once(
             } else {
                 "retrying".into()
             },
+            title: spec.title.clone(),
             note: spec
                 .captions_only
                 .then(|| format!("fetching subtitles: {}", spec.captions.join(", "))),
@@ -1763,6 +1943,7 @@ async fn run_once_android(
             } else {
                 "retrying".into()
             },
+            title: spec.title.clone(),
             note: spec
                 .captions_only
                 .then(|| format!("fetching subtitles: {}", spec.captions.join(", "))),
@@ -2071,6 +2252,55 @@ mod tests {
         assert_eq!(pipe_line(b"\xff\xfe\n"), Some("��".to_string()));
         // Empty read marks EOF.
         assert_eq!(pipe_line(b""), None);
+    }
+
+    #[test]
+    fn completion_summary_counts_successes_only() {
+        let (heading, text) = completion_text(1, Some("Song"));
+        assert_eq!((heading.as_str(), text.as_str()), ("Download complete", "Song"));
+        let (heading, text) = completion_text(1, None);
+        assert_eq!(text, "Saved to your downloads");
+        assert_eq!(heading, "Download complete");
+        let (heading, text) = completion_text(3, Some("Song"));
+        assert_eq!(heading, "3 downloads complete");
+        assert_eq!(text, "Saved to your downloads");
+    }
+
+    #[test]
+    fn notification_shows_batch_average_rate_and_eta() {
+        let job = |status: &str, percent: f64, loaded: Option<u64>, total: Option<u64>, title: &str| JobView {
+            status: status.into(),
+            percent,
+            loaded,
+            total,
+            title: Some(title.into()),
+            ..Default::default()
+        };
+        let views = [
+            job("downloading", 50.0, Some(5_000_000), Some(10_000_000), "A"),
+            job("downloading", 25.0, Some(2_500_000), Some(10_000_000), "B"),
+        ];
+        let (title, text, pct) = notification_view(&views, Some(1_000_000.0));
+        assert_eq!(title, "Downloading 2 videos");
+        assert_eq!(pct, Some(38)); // 37.5 rounds up
+        assert_eq!(text, "38% · 977 KB/s · ETA 0:13");
+
+        // Single job: its title, and no invented ETA when sizes are unknown.
+        let (title, text, pct) = notification_view(
+            &[job("downloading", 45.0, None, None, "Song")],
+            Some(2.5 * 1_048_576.0),
+        );
+        assert_eq!((title.as_str(), text.as_str(), pct), ("Song", "45% · 2.5 MB/s", Some(45)));
+
+        // Indeterminate states: merging wins, then queued/retrying.
+        assert_eq!(
+            notification_view(&[job("merging", 100.0, None, None, "X")], None),
+            ("X".to_string(), "Processing…".to_string(), None)
+        );
+        assert_eq!(notification_view(&[job("queued", 0.0, None, None, "X")], None).2, None);
+        assert_eq!(notification_view(&[job("retrying", 0.0, None, None, "X")], None).1, "Retrying…");
+        // No title from the frontend falls back to the app name.
+        assert_eq!(notification_view(&[job("downloading", 0.0, None, None, "")], None).0, "KouTube");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { menuEntriesFor, accentEntries, variantEntries, MENU_SEP, type MenuContext } from './ContextMenu';
+import { menuEntriesFor, accentEntries, variantEntries, usesNativeTextMenu, MENU_SEP, type MenuContext } from './ContextMenu';
 import { blankTransfer, type Transfer } from '../lib/store';
 
 const OPTS = { dev: false, version: '0.3.1', desktop: true };
@@ -9,6 +9,21 @@ const ids = (ctx: MenuContext, dev = false) =>
 function fakeInput(): HTMLInputElement {
   return { focus() {}, select() {} } as unknown as HTMLInputElement;
 }
+
+describe('native text menu', () => {
+  it('leaves Android text fields to the system selection menu', () => {
+    expect(usesNativeTextMenu(true, document.createElement('input'))).toBe(true);
+    expect(usesNativeTextMenu(true, document.createElement('textarea'))).toBe(true);
+  });
+
+  it('keeps the custom menu on desktop and non-text targets', () => {
+    expect(usesNativeTextMenu(false, document.createElement('input'))).toBe(false);
+    expect(usesNativeTextMenu(true, document.createElement('div'))).toBe(false);
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    expect(usesNativeTextMenu(true, checkbox)).toBe(false);
+  });
+});
 
 describe('context menu entries', () => {
   it('offers edit ops plus Paste & Inspect in inputs', () => {

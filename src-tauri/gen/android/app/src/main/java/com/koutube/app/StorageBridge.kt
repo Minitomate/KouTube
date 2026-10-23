@@ -92,6 +92,20 @@ object StorageBridge {
         if (on) DownloadService.start(ctx) else DownloadService.stop(ctx)
     }
 
+    /** Batch progress from Rust: title, "45% · 2.3 MB/s · ETA 1:02", percent. */
+    @JvmStatic
+    fun notifyDownload(title: String, text: String, percent: Int, indeterminate: Boolean) {
+        val ctx = appContext ?: return
+        DownloadService.notify(ctx, title, text, percent, indeterminate)
+    }
+
+    /** One-shot completion notification; stays after the service stops. */
+    @JvmStatic
+    fun notifyDownloadDone(title: String, text: String) {
+        val ctx = appContext ?: return
+        DownloadService.done(ctx, title, text)
+    }
+
     private fun granted(ctx: Context): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
